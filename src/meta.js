@@ -30,7 +30,18 @@ export const META_UPGRADES = [
 ];
 
 export function metaLevels() {
-  try { return JSON.parse(localStorage.getItem(META_KEY) || '{}'); } catch { return {}; }
+  let lv = {};
+  try { lv = JSON.parse(localStorage.getItem(META_KEY) || '{}'); } catch { lv = {}; }
+  // 矫正旧存档：带 max 的升级项（实战经验 max 5、硬化体质 max 3 等）若已超过上限，回落并写回
+  let fixed = false;
+  for (const u of META_UPGRADES) {
+    if (u.max != null && typeof lv[u.id] === 'number' && lv[u.id] > u.max) {
+      lv[u.id] = u.max;
+      fixed = true;
+    }
+  }
+  if (fixed) setMetaLevels(lv);
+  return lv;
 }
 export function setMetaLevels(lv) {
   localStorage.setItem(META_KEY, JSON.stringify(lv));
