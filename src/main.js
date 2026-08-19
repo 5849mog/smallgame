@@ -1154,7 +1154,9 @@ function tryLevelUp() {
 
 function openUpgradeChoice() {
   state.phase = 'upgrade';
-  const opts = [...RUN_UPGRADES].sort(() => Math.random() - 0.5).slice(0, 3);
+  // 已满效果的卡不再出现：护甲封顶 60%（=3 次 -20%），局外已叠的层数计入其中
+  const avail = RUN_UPGRADES.filter((u) => u.id !== 'armor' || state.runStats.armorMult < 0.6);
+  const opts = [...avail].sort(() => Math.random() - 0.5).slice(0, 3);
   ui.upgradeCards.innerHTML = '';
   for (const u of opts) {
     const card = document.createElement('div');
@@ -1222,6 +1224,7 @@ function renderMetaList() {
     const unlimited = upg.max == null; // 无上限：只要有钱就能无限升
     const maxed = upg.max != null && lv >= upg.max;
     const unlocked = upg.paid && lv >= 1;
+    const repeatable = upg.paid && (unlimited || upg.max > 1); // 可反复升级的付费项（max=1 的一次性解锁）
     const cost = upg.paid ? `💎 ¥${upg.price}` : `🪙 ${levelCost(upg, lv)}`;
 
     const info = document.createElement('div');
@@ -1231,20 +1234,20 @@ function renderMetaList() {
       `<div class="mi-name">${upg.icon} ${upg.name}</div>` +
       `<div class="mi-desc">${upg.desc}</div>` +
       // 一次性解锁的付费项（外观/一次性道具）不显示等级
-      (upg.paid && upg.max != null ? '' : levelDiv);
+      (upg.paid && upg.max === 1 ? '' : levelDiv);
 
     const btn = document.createElement('button');
     btn.className = `mi-btn${upg.paid ? ' paid-btn' : ''}`;
     if (upg.paid) {
-      btn.textContent = unlocked ? (unlimited ? `升级 ${cost}` : '已解锁 ✓') : `解锁 ${cost}`;
-      btn.disabled = unlocked && !unlimited;
+      btn.textContent = !unlocked ? `解锁 ${cost}` : (repeatable ? (maxed ? '已满级' : `升级 ${cost}`) : '已解锁 ✓');
+      btn.disabled = !repeatable || maxed;
       btn.addEventListener('click', () => {
         btn.disabled = true;
         btn.textContent = '💳 支付中…';
         sfx.pickup('medkit');
         // 破解钩子：模拟支付流程后直接放行
         mockPurchase(upg).then(() => {
-          if (unlimited) {
+          if (repeatable && !maxed) {
             const next = metaLevels();
             next[upg.id] = (next[upg.id] || 0) + 1;
             setMetaLevels(next);

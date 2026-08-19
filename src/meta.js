@@ -25,7 +25,7 @@ export const META_UPGRADES = [
   { id: 'doubleCoins', name: '双倍金币', icon: '💰', desc: '金币收益 ×2（每级翻倍，付费特权）', per: 1, paid: true, price: 45 },
   { id: 'startNuke', name: '开局核弹', icon: '☢️', desc: '开局立即引爆核弹清屏（付费道具）', max: 1, per: 1, paid: true, price: 60 },
   { id: 'critStart', name: '暴击血脉', icon: '🎯', desc: '暴击 +20%（每级叠加，付费特权）', per: 0.2, paid: true, price: 35 },
-  { id: 'armorStart', name: '硬化体质', icon: '🧱', desc: '近战损耗 -20%（每级叠加，封顶 60%）', per: 0.2, paid: true, price: 35 },
+  { id: 'armorStart', name: '硬化体质', icon: '🧱', desc: '近战损耗 -20%（每级叠加，最多 3 级）', max: 3, per: 0.2, paid: true, price: 35 },
   { id: 'weaponMaster', name: '武器大师', icon: '⚔️', desc: '全部武器初始 Lv+1（每级叠加，付费特权）', per: 1, paid: true, price: 50 },
 ];
 
