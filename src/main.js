@@ -1041,6 +1041,7 @@ const ui = {
   metaCloseBtn: document.getElementById('metaCloseBtn'),
   upgrade: document.getElementById('upgradeOverlay'),
   upgradeCards: document.getElementById('upgradeCards'),
+  freezeFx: document.getElementById('freezeFx'),
 };
 ui.resetBtn.style.display = 'none'; // 无尽模式没有"回到第 1 关"
 
@@ -1085,6 +1086,7 @@ function updateHud() {
   if (state.shieldTime > 0) html += `<div class="buffChip">🛡️ 护盾 ${state.shieldTime.toFixed(0)}s</div>`;
   if (state.freezeTime > 0) html += `<div class="buffChip">❄️ 冰冻 ${state.freezeTime.toFixed(0)}s</div>`;
   ui.buffRow.innerHTML = html;
+  ui.freezeFx.classList.toggle('on', state.freezeTime > 0); // 冰冻世界的全屏提示
 }
 
 // ============================================================ 输入
@@ -1652,11 +1654,11 @@ function updateRun(dt, time) {
     const dz = squad.z - zb.z;
     const len = Math.hypot(dx, dz) || 1;
 
-    // ---- 类型技能（冰冻时全部停摆）
+    // ---- 类型技能（冰冻时几乎停摆：12% 速度蠕动，配合全屏冰冻滤镜提示，不再"完全定死"）
     if (!frozen) zb.skillT -= dt;
-    let skillSpeedMul = frozen ? 0 : 1;
+    let skillSpeedMul = frozen ? 0.12 : 1;
     if (frozen) {
-      // 冻结中：不移动、不放技能，但照常挨打
+      // 冻结中：几乎不动、不放技能，但照常挨打
     } else if (zb.type === 'normal') {
       // 暴走：逼近后短暂提速
       if (len < 13) skillSpeedMul = 1.4;
@@ -1705,8 +1707,8 @@ function updateRun(dt, time) {
         sfx.gateBad();
       }
     } else if (zb.type === 'infected') {
-      // 被感染的士兵：保持距离，低射速朝人类开火
-      if (len < 15) skillSpeedMul = 0; // 到达射程后站定
+      // 被感染的士兵：保持距离低射速开火，但只减速到 40% 缓慢挪动，不会完全定住
+      if (len < 15) skillSpeedMul = Math.min(skillSpeedMul, 0.4);
       if (zb.skillT <= 0 && len < 32) {
         zb.skillT = 2.4 + Math.random() * 1.6;
         const mx = zb.x + ((squad.x - zb.x) / len) * 0.5;

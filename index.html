@@ -128,6 +128,14 @@
       0% { opacity: 0; } 12% { opacity: .95; } 100% { opacity: 0; }
     }
 
+    /* 冰冻世界的全屏提示：一眼看出是冰冻效果，而非"僵尸卡住" */
+    #freezeFx {
+      position: fixed; inset: 0; pointer-events: none; z-index: 4;
+      background: radial-gradient(ellipse at 50% 45%, rgba(150,210,255,.30), rgba(80,140,255,.14));
+      opacity: 0; transition: opacity .35s;
+    }
+    #freezeFx.on { opacity: 1; }
+
     /* Floating math text */
     .floatText {
       position: absolute; transform: translate(-50%, -50%);
@@ -236,6 +244,7 @@
     <button id="muteBtn" title="静音">🔊</button>
   </div>
   <div id="flash"></div>
+  <div id="freezeFx"></div>
 
   <div id="menuOverlay" class="overlay visible">
     <h1>末日之门</h1>
