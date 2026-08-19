@@ -291,12 +291,12 @@ function makeGatePair(z) {
     () => [{ op: 'add', value: Math.round(budget * 2) }, { op: 'mul', value: 2 }],
   ];
   let [ca, cb] = rngPick(combos)();
-  // 一定概率变成武器门对：二选一换枪（各带独立等级），倒计数随难度增长
+  // 一定概率变成武器门对：二选一换枪（各带独立等级），倒计数随难度增长但封顶 24 发
   if (-z > 60 && Math.random() < 0.3) {
     const pool = WEAPON_KEYS.filter((k) => k !== state.weapon);
     if (pool.length > 1) {
       const picks = [...pool].sort(() => Math.random() - 0.5).slice(0, 2);
-      const need = Math.round(6 + diff * 3.5);
+      const need = Math.min(Math.round(6 + diff * 3.5), 24);
       ca = { op: 'weapon', value: picks[0], need };
       cb = { op: 'weapon', value: picks[1], need };
     }
@@ -734,7 +734,7 @@ function updateSkulls(dt, time) {
 // ============================================================ 粒子爆点 + 地面血泊
 const bursts = [];
 function spawnBurst(x, y, z, color, n = 14, speed = 5, life = 0.45) {
-  if (bursts.length > 60) return;
+  if (bursts.length > 150) return;
   const pos = new Float32Array(n * 3);
   const vel = [];
   for (let i = 0; i < n; i++) {
@@ -925,7 +925,8 @@ function spawnWave(zCenter, size) {
     if (zombies.length >= MAX_ZOMBIE_RENDER) return;
     const typeKey = rollZombieType();
     const t = ZOMBIE_TYPES[typeKey];
-    const hp = t.hp(diff);
+    // 血量随兵力匹配增长（5 万兵力以下几乎无感，之后线性）：大部队面对的尸潮也"人多势众"
+    const hp = t.hp(diff) + state.count * 0.8 * Math.min(1, state.count / 50000);
     zombies.push({
       type: typeKey,
       x: (Math.random() - 0.5) * (ROAD_W - 1.2),
@@ -1478,9 +1479,10 @@ function updateRun(dt, time) {
   const weaponPower = 1 + state.dist / 600; // 武器随距离越来越强
   const rs = state.runStats;
   const wlvl = state.weaponLevels[state.weapon] || 0;
-  const dmgScale = (state.count / shooters) * weaponPower * (1 + wlvl * 0.12) * rs.dmgMult * (1 + state.meta.startDmg);
+  // 伤害随兵力增长但压缩：count ≤ 1 万几乎无感，99 万时约 1/26，配合僵尸血量匹配避免秒杀
+  const dmgScale = (state.count / shooters) * weaponPower * (1 + wlvl * 0.12) * rs.dmgMult * (1 + state.meta.startDmg) / (1 + state.count / 40000);
   state.fireAcc += shooters * weapon.rate * rs.rateMult * (1 + state.meta.startRate) * rageMult * dt;
-  let shots = Math.min(Math.floor(state.fireAcc), 40);
+  let shots = Math.min(Math.floor(state.fireAcc), 96);
   state.fireAcc -= shots;
   while (shots-- > 0) {
     const idx = state.fireIndex++ % renderN;
@@ -1510,7 +1512,7 @@ function updateRun(dt, time) {
         }
       }
     }
-    // 穿门（武器门不需要穿，穿过无事发生）
+    // 穿门（武器门优先打掉换枪；没打掉就穿过 → 兜底自动装备，保证永远能换）
     if (squad.z <= pair.z && squad.z > pair.z - 2) {
       const gate = Math.abs(squad.x - pair.a.x) < Math.abs(squad.x - pair.b.x) ? pair.a : pair.b;
       pair.consumed = true;
@@ -1522,6 +1524,9 @@ function updateRun(dt, time) {
         floatText(new THREE.Vector3(gate.x, GATE_H, gate.z), gateLabel(gate), good);
         spawnBurst(gate.x, 1.6, gate.z, good ? 0x59b8ff : 0xff6060, 20, 6, 0.5);
         good ? sfx.gateGood() : sfx.gateBad();
+      } else if (gate.remaining > 0) {
+        // 兜底：没打掉也直接装备，后期移速快时不会白白穿过去
+        activateWeaponGate(gate);
       }
       pair.a.group.visible = false;
       pair.b.group.visible = false;
@@ -1547,9 +1552,9 @@ function updateRun(dt, time) {
   }
 
   // ---- 僵尸：生成即追击，手臂朝向小队；每种类型有专属技能
-  // 后期基础速度可超过小队跑速（8.5），从背后也能追上
+  // 后期基础速度贴着小队跑（慢 1），前期保持原节奏；猎手冲刺等技能可追上
   const diff = diffAt(state.dist);
-  const zSpeed = Math.min(10.5, 3.4 + diff * 0.55);
+  const zSpeed = Math.min(3.4 + diff * 0.55, squad.speed - 1);
   const frozen = state.freezeTime > 0;
   for (let i = zombies.length - 1; i >= 0; i--) {
     const zb = zombies[i];
@@ -1574,10 +1579,10 @@ function updateRun(dt, time) {
         if (Math.random() < 0.3) spawnBurst(zb.x, 0.6, zb.z, 0xc4553c, 3, 1, 0.25);
       }
     } else if (zb.type === 'butcher') {
-      // 投掷兽颅：中远距离抡起兽颅砸向小队
+      // 投掷兽颅：中远距离抡起兽颅砸向小队（后期频率随距离加快）
       if (zb.skillT <= 0 && len > 8 && len < 34) {
-        zb.skillT = 4 + Math.random() * 2;
-        throwSkull(zb.x, 1.6 * zb.scale, zb.z, 0.03);
+        zb.skillT = Math.max(1.6, 4 + Math.random() * 2 - diff * 0.04);
+        throwSkull(zb.x, 1.6 * zb.scale, zb.z, 0.045);
       }
     } else if (zb.type === 'shadow') {
       // 潜行：周期性相位隐身，隐身时子弹打不中
@@ -1671,7 +1676,8 @@ function updateRun(dt, time) {
         Math.abs(zb.x - squad.x) < 0.9 + squadRadius() * 0.6) {
       zombies.splice(i, 1);
       spawnBurst(zb.x, 0.9, zb.z, state.shieldTime > 0 ? 0x58baff : 0xff5050, 14, 5, 0.4);
-      loseSoldiers(t.contactLoss);
+      // 接触损失按兵力百分比（后期大规模部队也有真实损耗）
+      loseSoldiers(Math.max(1, Math.round(state.count * t.contactLoss)));
       if (state.phase === 'result') return;
     }
   }
