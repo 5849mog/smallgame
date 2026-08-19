@@ -1197,29 +1197,37 @@ function renderMetaList() {
   for (const upg of META_UPGRADES) {
     const item = document.createElement('div');
     item.className = `metaItem${upg.paid ? ' paid' : ''}`;
-    const lv = upg.paid ? (paid.includes(upg.id) ? 1 : 0) : (levels[upg.id] || 0);
-    const maxed = lv >= upg.max;
+    const lv = upg.paid ? Math.max(paid.includes(upg.id) ? 1 : 0, levels[upg.id] || 0) : (levels[upg.id] || 0);
+    const unlimited = upg.max == null; // 无上限：只要有钱就能无限升
+    const maxed = upg.max != null && lv >= upg.max;
     const unlocked = upg.paid && lv >= 1;
     const cost = upg.paid ? `💎 ¥${upg.price}` : `🪙 ${levelCost(upg, lv)}`;
 
     const info = document.createElement('div');
     info.className = 'mi-info';
+    const levelDiv = `<div class="mi-level">Lv ${lv}${unlimited ? ' / ∞' : ` / ${upg.max}`}</div>`;
     info.innerHTML =
       `<div class="mi-name">${upg.icon} ${upg.name}</div>` +
       `<div class="mi-desc">${upg.desc}</div>` +
-      (upg.paid ? '' : `<div class="mi-level">Lv ${lv} / ${upg.max}</div>`);
+      // 一次性解锁的付费项（外观/一次性道具）不显示等级
+      (upg.paid && upg.max != null ? '' : levelDiv);
 
     const btn = document.createElement('button');
     btn.className = `mi-btn${upg.paid ? ' paid-btn' : ''}`;
     if (upg.paid) {
-      btn.textContent = unlocked ? '已解锁 ✓' : `解锁 ${cost}`;
-      btn.disabled = unlocked;
+      btn.textContent = unlocked ? (unlimited ? `升级 ${cost}` : '已解锁 ✓') : `解锁 ${cost}`;
+      btn.disabled = unlocked && !unlimited;
       btn.addEventListener('click', () => {
         btn.disabled = true;
         btn.textContent = '💳 支付中…';
         sfx.pickup('medkit');
         // 破解钩子：模拟支付流程后直接放行
         mockPurchase(upg).then(() => {
+          if (unlimited) {
+            const next = metaLevels();
+            next[upg.id] = (next[upg.id] || 0) + 1;
+            setMetaLevels(next);
+          }
           sfx.levelUp();
           renderMetaList();
         });
@@ -1297,8 +1305,8 @@ function startRun() {
   state.kills = 0;
   state.weapon = 'rifle';
   state.weaponLevels = {
-    rifle: m.weaponMaster ? 1 : 0, shotgun: m.weaponMaster ? 1 : 0, minigun: m.weaponMaster ? 1 : 0,
-    rocket: m.weaponMaster ? 1 : 0, tesla: m.weaponMaster ? 1 : 0, flamer: m.weaponMaster ? 1 : 0,
+    rifle: m.weaponMaster || 0, shotgun: m.weaponMaster || 0, minigun: m.weaponMaster || 0,
+    rocket: m.weaponMaster || 0, tesla: m.weaponMaster || 0, flamer: m.weaponMaster || 0,
   };
   state.runStats = { dmgMult: 1, rateMult: 1, critChance: m.critStart, armorMult: m.armorStart, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 };
   state.pendingDmg = 0;
@@ -1328,7 +1336,7 @@ function startRun() {
   if (m.shieldStart > 0) state.shieldTime = m.shieldStart;
   if (m.rageStart > 0) state.rageTime = m.rageStart;
   if (m.freezeStart > 0) state.freezeTime = m.freezeStart;
-  if (m.luckyStart > 0) applyPickup(rngPick(Object.keys(ITEMS)));
+  for (let i = 0; i < m.luckyStart; i++) applyPickup(rngPick(Object.keys(ITEMS)));
   if (m.startNuke) {
     // 付费「开局核弹」：起跑后一小波僵尸 + 核弹清屏
     setTimeout(() => {
@@ -1358,7 +1366,7 @@ function onDefeat() {
     localStorage.setItem('dg_best', String(dist));
   }
   // 金币结算：击杀 ×2 + 距离/10，双倍金币付费特权 ×2
-  const coins = Math.floor((state.kills * 2 + dist / 10) * (state.meta?.doubleCoins ? 2 : 1));
+  const coins = Math.floor((state.kills * 2 + dist / 10) * (state.meta?.doubleCoins ?? 1));
   const balance = addCoins(coins);
   ui.resultTitle.textContent = '💀 全 军 覆 没';
   ui.resultTitle.className = 'lose';
@@ -1380,9 +1388,12 @@ ui.muteBtn.addEventListener('click', () => {
 
 function loseSoldiers(n, melee = true) {
   if (state.count <= 0 || state.shieldTime > 0) return;
-  // 护甲卡只减免近战接触损耗（封顶 60%）；远程攻击（投石/感染者子弹）不受减免
+  // 护甲只减免近战接触损耗，且无论卡牌还是局外 meta 叠多高都封顶 60%；远程攻击（投石/感染者子弹）不受减免
   const rs = state.runStats;
-  if (melee && rs && rs.armorMult > 0) n = Math.max(1, Math.round(n * (1 - rs.armorMult)));
+  if (melee && rs && rs.armorMult > 0) {
+    const armor = Math.min(0.6, rs.armorMult);
+    n = Math.max(1, Math.round(n * (1 - armor)));
+  }
   state.count = Math.max(0, state.count - n);
   state.shake = Math.min(0.5, state.shake + 0.18);
   sfx.squadHurt();
