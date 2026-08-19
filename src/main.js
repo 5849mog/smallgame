@@ -1088,19 +1088,26 @@ function updateHud() {
 }
 
 // ============================================================ 输入
-let dragging = false, lastPX = 0;
+let dragging = false, dragPointerId = -1, dragAnchorX = 0, dragBaseTarget = 0;
 const keys = {};
 renderer.domElement.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return; // 只响应左键拖拽；中/右键按下不参与转向
-  dragging = true; lastPX = e.clientX;
+  if (e.pointerType === 'pen') return; // Apple Pencil 悬停/触碰都不参与，避免笔尖误触转向
+  if (dragging) return; // 已有手指在拖：忽略后续手指（多指/手掌误触不接管）
+  dragging = true;
+  dragPointerId = e.pointerId;
+  dragAnchorX = e.clientX;
+  dragBaseTarget = squad.targetX; // 绝对式：以按下时的目标为基准，手不动方向就不会自己变
 });
 window.addEventListener('pointermove', (e) => {
   if (!dragging || state.phase !== 'run') return;
-  const dx = e.clientX - lastPX;
-  lastPX = e.clientX;
-  squad.targetX = THREE.MathUtils.clamp(squad.targetX + dx * 0.02, -SQUAD_X_LIMIT, SQUAD_X_LIMIT);
+  if (e.pointerId !== dragPointerId) return; // 只认拖拽的那根手指
+  const dx = e.clientX - dragAnchorX;
+  squad.targetX = THREE.MathUtils.clamp(dragBaseTarget + dx * 0.02, -SQUAD_X_LIMIT, SQUAD_X_LIMIT);
 });
-window.addEventListener('pointerup', () => { dragging = false; });
+window.addEventListener('pointerup', (e) => {
+  if (e.pointerId === dragPointerId) dragging = false;
+});
 window.addEventListener('pointercancel', () => { dragging = false; }); // 触屏手势被系统接管时也会松键
 // 兜底：再次点击页面时清掉卡住的按键（物理仍按着的键由 keydown repeat 立即恢复）
 window.addEventListener('pointerdown', () => {
