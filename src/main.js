@@ -46,6 +46,13 @@ window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
+// iOS Safari 首帧视口可能未就绪（先按 980px 布局视口渲染），延迟校正一次，避免画面只占/只显示屏幕的一部分
+setTimeout(() => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}, 300);
+
 // ============================================================ 环境：按块无限生成
 function makeRoadTexture() {
   const c = document.createElement('canvas');

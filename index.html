@@ -128,13 +128,14 @@
       0% { opacity: 0; } 12% { opacity: .95; } 100% { opacity: 0; }
     }
 
-    /* 冰冻世界的全屏提示：一眼看出是冰冻效果，而非"僵尸卡住" */
+    /* 冰冻世界的全屏提示：一眼看出是冰冻效果，而非"僵尸卡住"。
+       用 visibility 而不是仅 opacity 控制：iOS Safari 上 opacity:0 的全屏层仍参与合成，可能干扰兄弟元素渲染 */
     #freezeFx {
       position: fixed; inset: 0; pointer-events: none; z-index: 4;
       background: radial-gradient(ellipse at 50% 45%, rgba(150,210,255,.30), rgba(80,140,255,.14));
-      opacity: 0; transition: opacity .35s;
+      opacity: 0; visibility: hidden; transition: opacity .35s, visibility .35s;
     }
-    #freezeFx.on { opacity: 1; }
+    #freezeFx.on { opacity: 1; visibility: visible; }
 
     /* Floating math text */
     .floatText {
@@ -157,6 +158,8 @@
       align-items: center; justify-content: center; flex-direction: column;
       background: radial-gradient(ellipse at 50% 35%, rgba(40,25,60,.82), rgba(8,5,14,.94));
       text-align: center; z-index: 10;
+      overflow-y: auto; /* 内容超高时可滚动，不会被裁 */
+      align-items: safe center; justify-content: safe center; /* 异常视口（缩放/分屏）下回退顶部对齐 */
     }
     .overlay.visible { display: flex; }
     .overlay h1 {
@@ -193,7 +196,7 @@
 
     /* ---------- 局外成长面板 ---------- */
     #metaCoins { font-size: 20px; font-weight: 900; color: var(--gold); margin-bottom: 16px; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(255,210,74,.3); }
-    #metaList { width: min(580px, 92vw); max-height: 56vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+    #metaList { width: min(580px, 92vw); max-height: 56vh; max-height: 56dvh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
     .metaItem {
       display: flex; align-items: center; gap: 12px; padding: 12px 16px;
       border-radius: 14px; text-align: left;

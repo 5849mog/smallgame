@@ -13,7 +13,7 @@ export const META_UPGRADES = [
   { id: 'startDmg', name: '军械改造', icon: '🔧', desc: '全武器伤害 +8%（无限叠加）', baseCost: 30, costStep: 20, per: 0.08 },
   { id: 'startRate', name: '扳机训练', icon: '⚡', desc: '射速 +6%（无限叠加）', baseCost: 30, costStep: 20, per: 0.06 },
   { id: 'speed', name: '疾行战靴', icon: '👟', desc: '小队移速 +0.3（无限叠加）', baseCost: 25, costStep: 15, per: 0.3 },
-  { id: 'xpGain', name: '实战经验', icon: '📖', desc: '击杀经验获取 +15%（无限叠加）', baseCost: 40, costStep: 25, per: 0.15 },
+  { id: 'xpGain', name: '实战经验', icon: '📖', desc: '击杀经验获取 +15%（最多 5 级）', max: 5, baseCost: 40, costStep: 25, per: 0.15 },
   { id: 'reinf', name: '增援效率', icon: '📦', desc: '增援/奖励兵力 +10%（无限叠加）', baseCost: 35, costStep: 20, per: 0.1 },
   { id: 'shieldStart', name: '开局护盾', icon: '🛡️', desc: '开局无敌护盾（每级 +3 秒）', baseCost: 60, costStep: 15, per: 3 },
   { id: 'rageStart', name: '开局狂暴', icon: '🔥', desc: '开局狂暴射速 ×2（每级 +3 秒）', baseCost: 60, costStep: 15, per: 3 },
