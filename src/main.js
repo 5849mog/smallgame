@@ -442,10 +442,11 @@ function updateZapLines(dt) {
 
 // 电击：从枪口锁定最近敌人，再向附近连锁跳跃；命中带麻痹减速
 function fireZap(sx, sz, dmg) {
+  const rs = state.runStats;
   const points = [new THREE.Vector3(sx, 0.8, sz)];
   const hitSet = new Set();
   let cx = sx, cz = sz;
-  let range = 32;
+  let range = 32 * rs.rangeMult; // 射程卡对电击器同样生效
   for (let hop = 0; hop < 4; hop++) {
     let best = null, bestD = range;
     for (const zb of zombies) {
@@ -455,7 +456,7 @@ function fireZap(sx, sz, dmg) {
     }
     if (!best) break;
     hitSet.add(best);
-    best.hp -= dmg;
+    best.hp -= dmg * (Math.random() < rs.critChance ? 2 : 1); // 电击逐跳判定暴击
     best.slowT = 0.6; // 电麻：短暂减速
     spawnBurst(best.x, 0.9, best.z, 0x9aeaff, 5, 2, 0.2);
     points.push(new THREE.Vector3(best.x, 0.9, best.z));
@@ -508,7 +509,8 @@ function spawnBullet(x, y, z, w, dmgScale) {
     vx: (Math.random() - 0.5) * 2 * w.spread * w.speed * 0.12,
     speed: w.speed,
     dmg: w.dmg * dmgScale,
-    aoe: w.aoe + rs.aoeAdd,
+    crit: Math.random() < rs.critChance, // 生成时定生死，命中时 ×2
+    aoe: w.aoe,
     size: w.size,
     color: w.color,
     trailAcc: 0,
@@ -882,7 +884,7 @@ const state = {
   killLevel: 0,
   xpMult: 1,
   // 局内成长叠加（三选一强化卡）
-  runStats: { dmgMult: 1, rateMult: 1, pelletsAdd: 0, aoeAdd: 0, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 },
+  runStats: { dmgMult: 1, rateMult: 1, critChance: 0, armorMult: 0, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 },
   reinfMult: 1,           // 增援/奖励兵力倍率（meta × 局内叠加）
   meta: null,             // 开局时的 meta 快照
   fireAcc: 0,
@@ -1144,8 +1146,8 @@ function applyRunUpgrade(id) {
   switch (id) {
     case 'dmg': rs.dmgMult += 0.15; break;
     case 'rate': rs.rateMult += 0.12; break;
-    case 'pellet': rs.pelletsAdd += 1; break;
-    case 'aoe': rs.aoeAdd += 0.4; break;
+    case 'crit': rs.critChance += 0.1; break;
+    case 'armor': rs.armorMult += 0.2; break;
     case 'range': rs.rangeMult += 0.2; break;
     case 'speed':
       rs.speedAdd += 0.5;
@@ -1263,7 +1265,7 @@ function startRun() {
   state.kills = 0;
   state.weapon = 'rifle';
   state.weaponLevels = { rifle: 0, shotgun: 0, minigun: 0, rocket: 0, tesla: 0, flamer: 0 };
-  state.runStats = { dmgMult: 1, rateMult: 1, pelletsAdd: 0, aoeAdd: 0, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 };
+  state.runStats = { dmgMult: 1, rateMult: 1, critChance: 0, armorMult: 0, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 };
   state.killXp = 0;
   state.killLevel = 0;
   state.xpMult = 1 + m.xpGain;
@@ -1341,6 +1343,9 @@ ui.muteBtn.addEventListener('click', () => {
 
 function loseSoldiers(n) {
   if (state.count <= 0 || state.shieldTime > 0) return;
+  // 护甲卡：接触/投石等所有兵力损耗统一减伤，最低扣 1
+  const rs = state.runStats;
+  if (rs && rs.armorMult > 0) n = Math.max(1, Math.round(n * (1 - rs.armorMult)));
   state.count = Math.max(0, state.count - n);
   state.shake = Math.min(0.5, state.shake + 0.18);
   sfx.squadHurt();
@@ -1491,7 +1496,7 @@ function updateRun(dt, time) {
     if (weapon.kind === 'zap') {
       fireZap(sx, sz - 0.5, weapon.dmg * dmgScale);
     } else {
-      for (let p = 0; p < weapon.pellets + rs.pelletsAdd; p++) {
+      for (let p = 0; p < weapon.pellets; p++) {
         spawnBullet(sx + 0.16, 0.72, sz - 0.5, weapon, dmgScale);
       }
     }
@@ -1646,7 +1651,8 @@ function updateRun(dt, time) {
         const hitR = (b.aoe > 0 ? 0.9 : 0.6) * Math.max(1, zb.scale * 0.8);
         if (Math.abs(b.z - zb.z) < hitR + 0.1 && Math.abs(b.x - zb.x) < hitR) {
           b.dead = true;
-          zb.hp -= b.dmg;
+          const hitDmg = b.dmg * (b.crit ? 2 : 1);
+          zb.hp -= hitDmg;
           if (b.aoe > 0) {
             if (b.kind === 'rocket') {
               spawnBurst(b.x, 0.8, b.z, 0xff8a3a, 22, 7, 0.5);
@@ -1658,7 +1664,7 @@ function updateRun(dt, time) {
             }
             for (const other of zombies) {
               if (other === zb) continue;
-              if (Math.hypot(other.x - b.x, other.z - b.z) < b.aoe) other.hp -= b.dmg;
+              if (Math.hypot(other.x - b.x, other.z - b.z) < b.aoe) other.hp -= hitDmg;
             }
           }
           if (zb.hp <= 0) break;

@@ -37,11 +37,12 @@ export const WEAPONS = {
 export const WEAPON_KEYS = Object.keys(WEAPONS);
 
 // ============================================================ 局内击杀升级（三选一强化卡）
+// 全部卡对任何武器 100% 生效，无死角
 export const RUN_UPGRADES = [
   { id: 'dmg',    icon: '💥', label: '伤害 +15%' },
   { id: 'rate',   icon: '⚡', label: '射速 +12%' },
-  { id: 'pellet', icon: '🎯', label: '弹丸 +1' },
-  { id: 'aoe',    icon: '💣', label: '爆炸半径 +0.4' },
+  { id: 'crit',   icon: '🎯', label: '暴击 +10%（×2 伤害）' },
+  { id: 'armor',  icon: '🧱', label: '护甲：接触损耗 -20%' },
   { id: 'range',  icon: '📏', label: '射程 +20%' },
   { id: 'speed',  icon: '👟', label: '移速 +0.5' },
   { id: 'reinf',  icon: '📦', label: '增援 +20%' },
