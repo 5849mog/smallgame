@@ -6,7 +6,7 @@ import {
   ROAD_W, SQUAD_X_LIMIT, MAX_SOLDIER_RENDER, MAX_ZOMBIE_RENDER, MAX_BULLETS,
   MAX_SQUAD_RADIUS, BASE_SPACING, MAX_SHOOTERS, GATE_W, GATE_H, CHUNK_LEN,
   GATE_SPACING, PICKUP_SPACING, WAVE_SPACING, HORDE_FIRST_AT, HORDE_INTERVAL,
-  KILL_XP_BASE, KILL_XP_POW,
+  KILL_XP_BASE, KILL_XP_POW, VISUAL_BULLETS_PER_FRAME, VISUAL_ZAP,
   diffAt, WEAPONS, WEAPON_KEYS, ITEMS, RUN_UPGRADES,
 } from './config.js';
 import { ZOMBIE_TYPES, ZOMBIE_TYPE_KEYS } from './types.js';
@@ -885,6 +885,7 @@ const state = {
   xpMult: 1,
   // 局内成长叠加（三选一强化卡）
   runStats: { dmgMult: 1, rateMult: 1, critChance: 0, armorMult: 0, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 },
+  pendingDmg: 0,          // 溢出射速折算的隐藏伤害，每帧就近结算给前方僵尸
   reinfMult: 1,           // 增援/奖励兵力倍率（meta × 局内叠加）
   meta: null,             // 开局时的 meta 快照
   fireAcc: 0,
@@ -1266,6 +1267,7 @@ function startRun() {
   state.weapon = 'rifle';
   state.weaponLevels = { rifle: 0, shotgun: 0, minigun: 0, rocket: 0, tesla: 0, flamer: 0 };
   state.runStats = { dmgMult: 1, rateMult: 1, critChance: 0, armorMult: 0, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 };
+  state.pendingDmg = 0;
   state.killXp = 0;
   state.killLevel = 0;
   state.xpMult = 1 + m.xpGain;
@@ -1475,7 +1477,7 @@ function updateRun(dt, time) {
   updateSpawners(dt);
   cleanupBehind();
 
-  // ---- 全员齐射（伤害/射速/弹丸/范围叠加武器等级与局内成长）
+  // ---- 全员齐射（真实射速无上限全额结算；视觉弹幕有上限保证性能，溢出折算为隐藏伤害）
   const weapon = WEAPONS[state.weapon];
   const renderN = Math.max(1, Math.min(state.count, currentRenderCap));
   const scale = formationScale(renderN);
@@ -1487,20 +1489,33 @@ function updateRun(dt, time) {
   // 伤害随兵力增长但压缩：count ≤ 1 万几乎无感，99 万时约 1/26，配合僵尸血量匹配避免秒杀
   const dmgScale = (state.count / shooters) * weaponPower * (1 + wlvl * 0.12) * rs.dmgMult * (1 + state.meta.startDmg) / (1 + state.count / 40000);
   state.fireAcc += shooters * weapon.rate * rs.rateMult * (1 + state.meta.startRate) * rageMult * dt;
-  let shots = Math.min(Math.floor(state.fireAcc), 96);
+  let shots = Math.floor(state.fireAcc);
   state.fireAcc -= shots;
+  // 电击器：链式查找有成本，每帧最多 VISUAL_ZAP 次；溢出按 2 跳期望折算
+  if (weapon.kind === 'zap' && shots > VISUAL_ZAP) {
+    state.pendingDmg += (shots - VISUAL_ZAP) * weapon.dmg * dmgScale * 2 * (1 + rs.critChance);
+    shots = VISUAL_ZAP;
+  }
+  let bulletsSpawned = 0;
   while (shots-- > 0) {
     const idx = state.fireIndex++ % renderN;
     const sx = squad.x + unitSpiral[idx].dx * scale;
     const sz = squad.z + unitSpiral[idx].dz * scale;
     if (weapon.kind === 'zap') {
       fireZap(sx, sz - 0.5, weapon.dmg * dmgScale);
+      sfx.shot(state.weapon);
     } else {
-      for (let p = 0; p < weapon.pellets; p++) {
+      const canSpawn = Math.max(0, VISUAL_BULLETS_PER_FRAME - bulletsSpawned);
+      const spawn = Math.min(weapon.pellets, canSpawn);
+      for (let p = 0; p < spawn; p++) {
         spawnBullet(sx + 0.16, 0.72, sz - 0.5, weapon, dmgScale);
+        bulletsSpawned++;
       }
+      // 未渲染的弹丸折算为隐藏伤害（伤害全额，视觉不卡）；枪声只跟随可见射击
+      const hidden = weapon.pellets - spawn;
+      if (hidden > 0) state.pendingDmg += hidden * weapon.dmg * dmgScale * (1 + rs.critChance);
+      if (spawn > 0) sfx.shot(state.weapon);
     }
-    sfx.shot(state.weapon);
   }
 
   // ---- 门逻辑
@@ -1685,6 +1700,21 @@ function updateRun(dt, time) {
       // 接触损失按兵力百分比（后期大规模部队也有真实损耗）
       loseSoldiers(Math.max(1, Math.round(state.count * t.contactLoss)));
       if (state.phase === 'result') return;
+    }
+  }
+
+  // 隐藏弹幕：把溢出射速折算的伤害就近结算给前方僵尸（等效命中，无视觉子弹）
+  if (state.pendingDmg > 0) {
+    const pd = state.pendingDmg;
+    state.pendingDmg = 0;
+    let remaining = pd;
+    for (let i = 0; i < zombies.length && remaining > 0; i++) {
+      const zb = zombies[i];
+      if (zb.hidden) continue;
+      if (zb.z > squad.z + 2 || zb.z < squad.z - 80) continue;
+      const d = Math.min(remaining, zb.hp + 1);
+      zb.hp -= d;
+      remaining -= d;
     }
   }
 

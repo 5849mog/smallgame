@@ -3,7 +3,7 @@ export const ROAD_W = 11;
 export const SQUAD_X_LIMIT = 3.4;
 export const MAX_SOLDIER_RENDER = 3000;      // 士兵渲染上限（自适应画质可下调）
 export const MAX_ZOMBIE_RENDER = 500;      // 允许僵尸铺满整个屏幕
-export const MAX_BULLETS = 2400;          // 子弹池：支撑每秒 2400 发 × 0.77s 寿命的并发量
+export const MAX_BULLETS = 1500;          // 子弹池：匹配视觉弹幕上限（30 颗/帧 × 60fps × 0.77s ≈ 1386 并发）
 export const MAX_SQUAD_RADIUS = 2.3;
 export const BASE_SPACING = 0.62;
 export const MAX_SHOOTERS = 50;
@@ -21,6 +21,10 @@ export const HORDE_INTERVAL = 420;         // 尸潮爆发间隔
 // 击杀升级曲线：升到第 level+1 级所需击杀数 = round(KILL_XP_BASE · level^KILL_XP_POW)
 export const KILL_XP_BASE = 8;
 export const KILL_XP_POW = 1.7;
+
+// 视觉弹幕上限（性能保护）：真实射速无上限，溢出的射击折算为隐藏伤害全额结算
+export const VISUAL_BULLETS_PER_FRAME = 30;  // 每帧最多渲染的子弹数（含弹丸展开）
+export const VISUAL_ZAP = 48;                // 每帧最多执行的闪电链次数
 
 // 难度系数：随跑过的距离无限增长
 export const diffAt = (dist) => 1 + dist / 140;
