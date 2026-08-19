@@ -72,8 +72,30 @@
       color: var(--gold); text-shadow: 0 1px 3px #000;
       white-space: nowrap;
     }
+    /* 底部武器栏：6 把武器自由切换 */
+    #weaponBar {
+      position: absolute; bottom: 66px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; pointer-events: auto;
+      padding: 6px 10px; border-radius: 999px;
+      background: rgba(0,0,0,.45); border: 1px solid rgba(255,255,255,.15);
+    }
+    .weaponSlot {
+      cursor: pointer; border: 1px solid rgba(255,255,255,.2); outline: none;
+      border-radius: 999px; padding: 6px 10px; min-width: 58px;
+      background: rgba(255,255,255,.08); color: #ccc;
+      font-size: 15px; font-weight: 800; letter-spacing: 0;
+      transition: transform .08s ease, background .1s ease, border-color .1s ease;
+      white-space: nowrap;
+    }
+    .weaponSlot:hover { transform: translateY(-2px); background: rgba(255,255,255,.16); }
+    .weaponSlot.active {
+      background: linear-gradient(180deg, #ffe259, #ffa751);
+      color: #4a2600; border-color: #ffe259;
+      box-shadow: 0 0 14px rgba(255,210,74,.45);
+    }
+    .weaponSlot .ws-lv { font-size: 11px; opacity: .85; margin-left: 2px; }
     #buffRow {
-      position: absolute; bottom: 68px; left: 50%; transform: translateX(-50%);
+      position: absolute; bottom: 122px; left: 50%; transform: translateX(-50%);
       display: flex; gap: 8px;
     }
     .buffChip {
@@ -208,6 +230,7 @@
     </div>
     <div id="countBadge">5</div>
     <div id="buffRow"></div>
+    <div id="weaponBar"></div>
     <div id="weaponTag">🔫 步枪</div>
     <div id="banner"></div>
     <button id="muteBtn" title="静音">🔊</button>
@@ -218,8 +241,8 @@
     <h1>末日之门</h1>
     <div class="sub">
       无尽模式：拖动 / 方向键 左右移动小队，穿过 <b class="blue">蓝色增益门</b>，避开 <b class="red">红色削弱门</b><br />
-      <b class="red">负数门</b>可以被子弹打回正数；<b class="gold">武器门</b>二选一，倒计数打到 0 立即换装！<br />
-      击杀攒经验会触发 <b class="gold">三选一强化</b>，僵尸潮会越来越汹涌，每隔一段路还有 <b class="red">尸潮爆发</b> —— 看你能跑多远 🧟
+      <b class="red">负数门</b>可以被子弹打回正数；<b class="gold">武器门</b>二选一，倒计数打到 0 立即升级该武器！<br />
+      底部武器栏可 <b class="gold">自由切换武器</b>，击杀攒经验触发 <b class="gold">三选一强化</b>，每隔一段路还有 <b class="red">尸潮爆发</b> —— 看你能跑多远 🧟
     </div>
     <div class="menuBtns">
       <button id="startBtn" class="btn">开始行动</button>

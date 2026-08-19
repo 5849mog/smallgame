@@ -22,6 +22,9 @@ export const META_UPGRADES = [
   { id: 'goldArmy', name: '黄金军团', icon: '👑', desc: '士兵全部变为金色（付费外观）', max: 1, per: 1, paid: true, price: 30 },
   { id: 'doubleCoins', name: '双倍金币', icon: '💰', desc: '每局金币收益 ×2（付费特权）', max: 1, per: 1, paid: true, price: 45 },
   { id: 'startNuke', name: '开局核弹', icon: '☢️', desc: '开局立即引爆核弹清屏（付费道具）', max: 1, per: 1, paid: true, price: 60 },
+  { id: 'critStart', name: '暴击血脉', icon: '🎯', desc: '开局暴击 +20%（付费特权）', max: 1, per: 0.2, paid: true, price: 35 },
+  { id: 'armorStart', name: '硬化体质', icon: '🧱', desc: '开局护甲：近战损耗 -20%（付费特权）', max: 1, per: 0.2, paid: true, price: 35 },
+  { id: 'weaponMaster', name: '武器大师', icon: '⚔️', desc: '开局全部武器 Lv1（付费特权）', max: 1, per: 1, paid: true, price: 50 },
 ];
 
 export function metaLevels() {
@@ -82,6 +85,7 @@ export function getMetaSnapshot() {
     return (lv[id] || 0) * (u?.per ?? 0);
   };
   const has = (id) => paid.includes(id);
+  const paidVal = (id) => (has(id) ? (META_UPGRADES.find((x) => x.id === id)?.per ?? 0) : 0);
   return {
     startSoldiers: Math.round(val('startSoldiers')),
     startDmg: val('startDmg'),
@@ -96,5 +100,8 @@ export function getMetaSnapshot() {
     goldArmy: has('goldArmy'),
     doubleCoins: has('doubleCoins'),
     startNuke: has('startNuke'),
+    critStart: paidVal('critStart'),
+    armorStart: paidVal('armorStart'),
+    weaponMaster: has('weaponMaster'),
   };
 }

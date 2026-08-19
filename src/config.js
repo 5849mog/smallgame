@@ -46,7 +46,7 @@ export const RUN_UPGRADES = [
   { id: 'dmg',    icon: '💥', label: '伤害 +15%' },
   { id: 'rate',   icon: '⚡', label: '射速 +12%' },
   { id: 'crit',   icon: '🎯', label: '暴击 +10%（×2 伤害）' },
-  { id: 'armor',  icon: '🧱', label: '护甲：接触损耗 -20%' },
+  { id: 'armor',  icon: '🧱', label: '护甲：近战损耗 -20%（最多 60%）' },
   { id: 'range',  icon: '📏', label: '射程 +20%' },
   { id: 'speed',  icon: '👟', label: '移速 +0.5' },
   { id: 'reinf',  icon: '📦', label: '增援 +20%' },

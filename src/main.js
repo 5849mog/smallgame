@@ -204,7 +204,7 @@ function drawGateCanvas(gate) {
       g.font = '900 46px Arial, sans-serif';
       g.fillText(w.name, 128, 70);
       g.font = '900 36px Arial, sans-serif';
-      g.fillText('已装备!', 128, 136);
+      g.fillText('已升级!', 128, 136);
     } else {
       // 大倒计数：打到 0 立即激活；附当前武器等级
       g.font = '900 88px Arial, sans-serif';
@@ -616,10 +616,10 @@ function updateEnemyBullets(dt) {
     b.x += b.vx * dt;
     b.z += b.vz * dt;
     b.life -= dt;
-    // 命中小队
+    // 命中小队（远程子弹不吃护甲）
     if (Math.hypot(b.x - squad.x, b.z - squad.z) < squadRadius() * 0.7 + 0.4) {
       spawnBurst(b.x, 0.7, b.z, 0xff5a4a, 8, 3, 0.3);
-      loseSoldiers(1);
+      loseSoldiers(1, false);
       enemyBullets.splice(i, 1);
       continue;
     }
@@ -706,7 +706,7 @@ function updateSkulls(dt, time) {
       sfx.skullImpact(Math.hypot(s.x - squad.x, s.z - squad.z));
       state.shake = Math.min(0.4, state.shake + 0.08);
       if (Math.hypot(s.x - squad.x, s.z - squad.z) < 2.3 + squadRadius() * 0.5) {
-        loseSoldiers(Math.max(1, Math.round(state.count * s.lossFrac)));
+        loseSoldiers(Math.max(1, Math.round(state.count * s.lossFrac)), false); // 远程投石不吃护甲
       }
       skulls.splice(i, 1);
     }
@@ -1022,6 +1022,7 @@ const ui = {
   progressFill: document.getElementById('progressFill'),
   countBadge: document.getElementById('countBadge'),
   weaponTag: document.getElementById('weaponTag'),
+  weaponBar: document.getElementById('weaponBar'),
   buffRow: document.getElementById('buffRow'),
   banner: document.getElementById('banner'),
   flash: document.getElementById('flash'),
@@ -1097,7 +1098,17 @@ window.addEventListener('pointermove', (e) => {
   squad.targetX = THREE.MathUtils.clamp(squad.targetX + dx * 0.02, -SQUAD_X_LIMIT, SQUAD_X_LIMIT);
 });
 window.addEventListener('pointerup', () => { dragging = false; });
-window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+window.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  // Q/E 切换武器
+  if (e.code === 'KeyQ') {
+    const i = WEAPON_KEYS.indexOf(state.weapon);
+    switchWeapon(WEAPON_KEYS[(i + WEAPON_KEYS.length - 1) % WEAPON_KEYS.length]);
+  } else if (e.code === 'KeyE') {
+    const i = WEAPON_KEYS.indexOf(state.weapon);
+    switchWeapon(WEAPON_KEYS[(i + 1) % WEAPON_KEYS.length]);
+  }
+});
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
 // ============================================================ 击杀升级（三选一强化卡）
@@ -1148,7 +1159,7 @@ function applyRunUpgrade(id) {
     case 'dmg': rs.dmgMult += 0.15; break;
     case 'rate': rs.rateMult += 0.12; break;
     case 'crit': rs.critChance += 0.1; break;
-    case 'armor': rs.armorMult += 0.2; break;
+    case 'armor': rs.armorMult = Math.min(0.6, rs.armorMult + 0.2); break; // 封顶 60%
     case 'range': rs.rangeMult += 0.2; break;
     case 'speed':
       rs.speedAdd += 0.5;
@@ -1239,6 +1250,26 @@ function renderMetaList() {
 ui.metaBtn.addEventListener('click', openMetaPanel);
 ui.metaCloseBtn.addEventListener('click', closeMetaPanel);
 
+// ============================================================ 武器栏（自由切换，Q/E 或点击）
+function switchWeapon(key) {
+  if (state.weapon === key) return;
+  state.weapon = key;
+  ui.weaponTag.textContent = `${WEAPONS[key].name} Lv${state.weaponLevels[key] || 0}`;
+  renderWeaponBar();
+  sfx.weaponUp();
+}
+
+function renderWeaponBar() {
+  ui.weaponBar.innerHTML = '';
+  for (const key of WEAPON_KEYS) {
+    const btn = document.createElement('button');
+    btn.className = `weaponSlot${key === state.weapon ? ' active' : ''}`;
+    btn.innerHTML = `${WEAPONS[key].name.split(' ')[0]}<span class="ws-lv">Lv${state.weaponLevels[key] || 0}</span>`;
+    btn.addEventListener('click', () => switchWeapon(key));
+    ui.weaponBar.appendChild(btn);
+  }
+}
+
 // ============================================================ 游戏流程
 function startRun() {
   // 清理旧战场
@@ -1265,8 +1296,11 @@ function startRun() {
   state.maxCount = state.count;
   state.kills = 0;
   state.weapon = 'rifle';
-  state.weaponLevels = { rifle: 0, shotgun: 0, minigun: 0, rocket: 0, tesla: 0, flamer: 0 };
-  state.runStats = { dmgMult: 1, rateMult: 1, critChance: 0, armorMult: 0, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 };
+  state.weaponLevels = {
+    rifle: m.weaponMaster ? 1 : 0, shotgun: m.weaponMaster ? 1 : 0, minigun: m.weaponMaster ? 1 : 0,
+    rocket: m.weaponMaster ? 1 : 0, tesla: m.weaponMaster ? 1 : 0, flamer: m.weaponMaster ? 1 : 0,
+  };
+  state.runStats = { dmgMult: 1, rateMult: 1, critChance: m.critStart, armorMult: m.armorStart, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 };
   state.pendingDmg = 0;
   state.killXp = 0;
   state.killLevel = 0;
@@ -1287,6 +1321,7 @@ function startRun() {
   state.trickleTimer = 2;
   state.pullTime = 0;
   ui.weaponTag.textContent = `${WEAPONS[state.weapon].name} Lv${state.weaponLevels[state.weapon]}`;
+  renderWeaponBar();
   swapSoldierCrowd(!!m.goldArmy);
 
   // 开局 buff 类 meta
@@ -1343,11 +1378,11 @@ ui.muteBtn.addEventListener('click', () => {
   ui.muteBtn.textContent = sfx.muted ? '🔇' : '🔊';
 });
 
-function loseSoldiers(n) {
+function loseSoldiers(n, melee = true) {
   if (state.count <= 0 || state.shieldTime > 0) return;
-  // 护甲卡：接触/投石等所有兵力损耗统一减伤，最低扣 1
+  // 护甲卡只减免近战接触损耗（封顶 60%）；远程攻击（投石/感染者子弹）不受减免
   const rs = state.runStats;
-  if (rs && rs.armorMult > 0) n = Math.max(1, Math.round(n * (1 - rs.armorMult)));
+  if (melee && rs && rs.armorMult > 0) n = Math.max(1, Math.round(n * (1 - rs.armorMult)));
   state.count = Math.max(0, state.count - n);
   state.shake = Math.min(0.5, state.shake + 0.18);
   sfx.squadHurt();
@@ -1420,18 +1455,17 @@ function hitInteractiveGate(gate) {
   }
 }
 
-// 武器门被打到 0 → 立即装备并升 1 级；二选一，激活后整对门关闭
+// 武器门被打到 0 → 该武器升级 1 级（不切换当前武器）；二选一，激活后整对门关闭
 function activateWeaponGate(gate) {
   const key = gate.value;
-  state.weapon = key;
   state.weaponLevels[key] = (state.weaponLevels[key] || 0) + 1;
   const lvl = state.weaponLevels[key];
-  ui.weaponTag.textContent = `${WEAPONS[key].name} Lv${lvl}`;
   drawGateCanvas(gate);
-  floatText(new THREE.Vector3(gate.x, GATE_H, gate.z), `${WEAPONS[key].name} Lv${lvl} 已装备!`, true);
+  floatText(new THREE.Vector3(gate.x, GATE_H, gate.z), `${WEAPONS[key].name} → Lv${lvl}!`, true);
   spawnBurst(gate.x, 1.8, gate.z, 0xffd24a, 26, 6, 0.5);
   spawnBurst(gate.x, 2.4, gate.z, 0x7dff9b, 18, 5, 0.5);
   sfx.weaponUp();
+  renderWeaponBar();
   const pair = gate.pair;
   if (pair && !pair.consumed) {
     pair.consumed = true;
