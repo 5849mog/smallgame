@@ -57,15 +57,6 @@
       white-space: nowrap;
     }
 
-    #bossbar {
-      position: absolute; top: 44px; left: 50%; transform: translateX(-50%);
-      width: min(420px, 70vw); display: none;
-    }
-    #bossbar.visible { display: block; }
-    #bossbar .label { text-align: center; font-size: 13px; font-weight: 800; color: #ffb0b0; letter-spacing: 3px; margin-bottom: 4px; text-shadow: 0 1px 3px #000; }
-    #bossbar .track { height: 12px; border-radius: 999px; background: rgba(0,0,0,.55); border: 1px solid rgba(255,120,120,.4); overflow: hidden; }
-    #bossbar .fill { height: 100%; width: 100%; background: linear-gradient(90deg, #ff4040, #ff8a3d); }
-
     #muteBtn {
       position: absolute; top: 12px; right: 14px; pointer-events: auto;
       width: 40px; height: 40px; border-radius: 50%;
@@ -166,6 +157,44 @@
     #resultStats { font-size: 17px; color: #efe6ff; margin-bottom: 26px; line-height: 2; }
     #resultTitle.win  { color: #7dff9b; text-shadow: 0 0 24px rgba(90,255,140,.4); }
     #resultTitle.lose { color: #ff6d6d; text-shadow: 0 0 24px rgba(255,80,80,.4); }
+
+    .menuBtns { display: flex; gap: 14px; align-items: center; justify-content: center; }
+    .menuBtns .btn.secondary { margin-top: 0; }
+
+    /* ---------- 局外成长面板 ---------- */
+    #metaCoins { font-size: 20px; font-weight: 900; color: var(--gold); margin-bottom: 16px; letter-spacing: 1px; text-shadow: 0 2px 8px rgba(255,210,74,.3); }
+    #metaList { width: min(580px, 92vw); max-height: 56vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+    .metaItem {
+      display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+      border-radius: 14px; text-align: left;
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14);
+    }
+    .metaItem.paid { border-color: rgba(255,210,74,.5); background: rgba(255,210,74,.07); }
+    .metaItem .mi-icon { font-size: 26px; flex: none; }
+    .metaItem .mi-info { flex: 1; min-width: 0; }
+    .metaItem .mi-name { font-weight: 800; font-size: 15px; }
+    .metaItem .mi-desc { font-size: 12.5px; color: #cbbfe0; margin-top: 2px; }
+    .metaItem .mi-level { font-size: 12px; color: var(--gold); margin-top: 3px; letter-spacing: 1px; }
+    .metaItem .mi-btn {
+      flex: none; pointer-events: auto; cursor: pointer; border: none; outline: none;
+      border-radius: 999px; padding: 8px 18px; font-size: 13px; font-weight: 800;
+      color: #4a2600; background: linear-gradient(180deg, #ffe259, #ffa751);
+    }
+    .metaItem .mi-btn:disabled { background: rgba(255,255,255,.12); color: #999; cursor: default; }
+    .metaItem .mi-btn.paid-btn { background: linear-gradient(180deg, #7ee0ff, #3aa0ff); color: #06243a; }
+
+    /* ---------- 击杀三选一强化卡 ---------- */
+    #upgradeCards { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; }
+    .upgCard {
+      pointer-events: auto; cursor: pointer; width: 170px; padding: 22px 14px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.05));
+      border: 2px solid rgba(255,210,74,.55);
+      transition: transform .1s ease, box-shadow .1s ease;
+    }
+    .upgCard:hover { transform: translateY(-6px); box-shadow: 0 10px 30px rgba(255,180,60,.25); }
+    .upgCard .uc-icon { font-size: 42px; margin-bottom: 10px; }
+    .upgCard .uc-label { font-size: 17px; font-weight: 900; color: var(--gold); }
   </style>
 </head>
 <body>
@@ -175,11 +204,7 @@
     <div id="topbar">
       <div id="levelTag">0m</div>
       <div id="progressTrack"><div id="progressFill"></div></div>
-      <div id="progressFlag">👹</div>
-    </div>
-    <div id="bossbar">
-      <div class="label">BOSS</div>
-      <div class="track"><div class="fill"></div></div>
+      <div id="progressFlag">🧟</div>
     </div>
     <div id="countBadge">5</div>
     <div id="buffRow"></div>
@@ -193,10 +218,13 @@
     <h1>末日之门</h1>
     <div class="sub">
       无尽模式：拖动 / 方向键 左右移动小队，穿过 <b class="blue">蓝色增益门</b>，避开 <b class="red">红色削弱门</b><br />
-      <b class="red">负数门</b>可以被子弹打回正数；<b class="gold">武器门</b>上的倒计数被打到 0 立即激活！<br />
-      僵尸潮会越来越汹涌，每隔一段路还有 <b class="red">BOSS</b> 拦路 —— 看你能跑多远 🧟
+      <b class="red">负数门</b>可以被子弹打回正数；<b class="gold">武器门</b>二选一，倒计数打到 0 立即换装！<br />
+      击杀攒经验会触发 <b class="gold">三选一强化</b>，僵尸潮会越来越汹涌，每隔一段路还有 <b class="red">尸潮爆发</b> —— 看你能跑多远 🧟
     </div>
-    <button id="startBtn" class="btn">开始行动</button>
+    <div class="menuBtns">
+      <button id="startBtn" class="btn">开始行动</button>
+      <button id="metaBtn" class="btn secondary">🔧 强化基地</button>
+    </div>
   </div>
 
   <div id="resultOverlay" class="overlay">
@@ -204,6 +232,19 @@
     <div id="resultStats"></div>
     <button id="resultBtn" class="btn">下一关</button>
     <button id="resetBtn" class="btn secondary">回到第 1 关</button>
+  </div>
+
+  <div id="metaOverlay" class="overlay">
+    <h2>🔧 强化基地</h2>
+    <div id="metaCoins">💰 0</div>
+    <div id="metaList"></div>
+    <button id="metaCloseBtn" class="btn secondary">返回</button>
+  </div>
+
+  <div id="upgradeOverlay" class="overlay">
+    <h2>🆙 升级！</h2>
+    <div class="sub">击杀越多，变得越强 —— 三选一</div>
+    <div id="upgradeCards"></div>
   </div>
 
   <script type="module" src="/src/main.js"></script>

@@ -51,7 +51,19 @@ export class CrowdRenderer {
 const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
 const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.85, ...opts });
 
-export function soldierParts() {
+export function soldierParts(gold = false) {
+  if (gold) {
+    // 黄金军团：付费外观，金属质感全金
+    const g = (c) => mat(c, { metalness: 0.7, roughness: 0.3 });
+    return [
+      { geometry: box(0.34, 0.36, 0.22), material: g(0x9c7c1e), position: [0, 0.18, 0] },          // 腿
+      { geometry: box(0.44, 0.4, 0.28), material: g(0xd4af37), position: [0, 0.56, 0] },           // 躯干
+      { geometry: box(0.5, 0.1, 0.32), material: g(0x9c7c1e), position: [0, 0.4, 0] },             // 腰带
+      { geometry: new THREE.SphereGeometry(0.15, 8, 8), material: g(0xbfa04a), position: [0, 0.88, 0] }, // 头
+      { geometry: box(0.32, 0.13, 0.34), material: g(0xd4af37), position: [0, 0.99, 0] },          // 头盔
+      { geometry: box(0.09, 0.1, 0.55), material: mat(0x6b5a20, { roughness: 0.4, metalness: 0.8 }), position: [0.16, 0.62, -0.18] }, // 枪
+    ];
+  }
   return [
     { geometry: box(0.34, 0.36, 0.22), material: mat(0x2a3550), position: [0, 0.18, 0] },          // 腿
     { geometry: box(0.44, 0.4, 0.28), material: mat(0x3f7bd9), position: [0, 0.56, 0] },           // 躯干

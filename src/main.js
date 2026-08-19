@@ -5,10 +5,15 @@ import { CrowdRenderer, soldierParts, zombieParts } from './crowd.js';
 import {
   ROAD_W, SQUAD_X_LIMIT, MAX_SOLDIER_RENDER, MAX_ZOMBIE_RENDER, MAX_BULLETS,
   MAX_SQUAD_RADIUS, BASE_SPACING, MAX_SHOOTERS, GATE_W, GATE_H, CHUNK_LEN,
-  GATE_SPACING, PICKUP_SPACING, WAVE_SPACING, FIRST_BOSS_AT, BOSS_INTERVAL,
-  diffAt, WEAPONS, WEAPON_KEYS, ITEMS,
+  GATE_SPACING, PICKUP_SPACING, WAVE_SPACING, HORDE_FIRST_AT, HORDE_INTERVAL,
+  KILL_XP_BASE, KILL_XP_POW,
+  diffAt, WEAPONS, WEAPON_KEYS, ITEMS, RUN_UPGRADES,
 } from './config.js';
 import { ZOMBIE_TYPES, ZOMBIE_TYPE_KEYS } from './types.js';
+import {
+  META_UPGRADES, metaLevels, setMetaLevels, getCoins, addCoins, paidUnlocked,
+  mockPurchase, getMetaSnapshot, levelCost,
+} from './meta.js';
 
 // ============================================================ 基础三件套
 const app = document.getElementById('app');
@@ -201,11 +206,11 @@ function drawGateCanvas(gate) {
       g.font = '900 36px Arial, sans-serif';
       g.fillText('已装备!', 128, 136);
     } else {
-      // 大倒计数：打到 0 直接激活
+      // 大倒计数：打到 0 立即激活；附当前武器等级
       g.font = '900 88px Arial, sans-serif';
       g.fillText(String(gate.remaining), 128, 74);
-      g.font = '800 30px Arial, sans-serif';
-      g.fillText(w.name, 128, 150);
+      g.font = '800 26px Arial, sans-serif';
+      g.fillText(`${w.name} Lv${state.weaponLevels[gate.value] || 0}`, 128, 150);
     }
   } else {
     g.font = '900 84px Arial, sans-serif';
@@ -265,9 +270,10 @@ function createGate(x, z, op, value, need = 0) {
 }
 
 function applyGate(gate, count) {
-  if (gate.op === 'mul') return Math.min(9999, count * gate.value);
+  if (gate.op === 'mul') return count * gate.value;
   if (gate.op === 'div') return Math.floor(count / gate.value);
-  return Math.min(9999, Math.max(0, count + gate.value));
+  const v = gate.value >= 0 ? Math.round(gate.value * state.reinfMult) : gate.value;
+  return Math.max(0, count + v);
 }
 
 function rngPick(arr) { return arr[(Math.random() * arr.length) | 0]; }
@@ -285,15 +291,24 @@ function makeGatePair(z) {
     () => [{ op: 'add', value: Math.round(budget * 2) }, { op: 'mul', value: 2 }],
   ];
   let [ca, cb] = rngPick(combos)();
-  // 一定概率换成武器门：倒计数随难度增长
+  // 一定概率变成武器门对：二选一换枪（各带独立等级），倒计数随难度增长
   if (-z > 60 && Math.random() < 0.3) {
-    const others = WEAPON_KEYS.filter((k) => k !== state.weapon);
-    ca = { op: 'weapon', value: rngPick(others), need: Math.round(6 + diff * 3.5) };
+    const pool = WEAPON_KEYS.filter((k) => k !== state.weapon);
+    if (pool.length > 1) {
+      const picks = [...pool].sort(() => Math.random() - 0.5).slice(0, 2);
+      const need = Math.round(6 + diff * 3.5);
+      ca = { op: 'weapon', value: picks[0], need };
+      cb = { op: 'weapon', value: picks[1], need };
+    }
+  } else if (Math.random() < 0.5) {
+    [ca, cb] = [cb, ca];
   }
-  if (Math.random() < 0.5) [ca, cb] = [cb, ca];
   const a = createGate(-half, z, ca.op, ca.value, ca.need ?? 0);
   const b = createGate(half, z, cb.op, cb.value, cb.need ?? 0);
-  gates.push({ a, b, consumed: false, z });
+  const pair = { a, b, consumed: false, z };
+  a.pair = pair;
+  b.pair = pair;
+  gates.push(pair);
 }
 
 function removeGatePair(pair) {
@@ -431,31 +446,19 @@ function fireZap(sx, sz, dmg) {
   const hitSet = new Set();
   let cx = sx, cz = sz;
   let range = 32;
-  for (let hop = 0; hop < 6; hop++) {
-    let best = null, bestD = range, bestBoss = null;
+  for (let hop = 0; hop < 4; hop++) {
+    let best = null, bestD = range;
     for (const zb of zombies) {
       if (zb.hidden || hitSet.has(zb) || zb.z > sz) continue;
       const d = Math.hypot(zb.x - cx, zb.z - cz);
-      if (d < bestD) { bestD = d; best = zb; bestBoss = null; }
-    }
-    // Boss 与僵尸同场竞争目标，不再只是兜底
-    for (const boss of bosses) {
-      if (hitSet.has(boss)) continue;
-      const d = Math.hypot(boss.x - cx, boss.z - cz);
-      if (d < bestD) { bestD = d; best = boss; bestBoss = boss; }
+      if (d < bestD) { bestD = d; best = zb; }
     }
     if (!best) break;
     hitSet.add(best);
-    if (bestBoss) {
-      bestBoss.hp -= dmg * 2.5;
-      points.push(new THREE.Vector3(bestBoss.x, 2.5, bestBoss.z));
-      spawnBurst(bestBoss.x, 2.5, bestBoss.z, 0x9aeaff, 6, 3, 0.25);
-    } else {
-      best.hp -= dmg;
-      best.slowT = 0.6; // 电麻：短暂减速
-      spawnBurst(best.x, 0.9, best.z, 0x9aeaff, 5, 2, 0.2);
-      points.push(new THREE.Vector3(best.x, 0.9, best.z));
-    }
+    best.hp -= dmg;
+    best.slowT = 0.6; // 电麻：短暂减速
+    spawnBurst(best.x, 0.9, best.z, 0x9aeaff, 5, 2, 0.2);
+    points.push(new THREE.Vector3(best.x, 0.9, best.z));
     cx = best.x; cz = best.z;
     range = 10; // 后续跳跃距离
   }
@@ -498,18 +501,19 @@ const _yAxis = new THREE.Vector3(0, 1, 0);
 
 function spawnBullet(x, y, z, w, dmgScale) {
   if (bullets.length >= MAX_BULLETS) return;
+  const rs = state.runStats;
   bullets.push({
     x, y, z,
     kind: w.kind,
     vx: (Math.random() - 0.5) * 2 * w.spread * w.speed * 0.12,
     speed: w.speed,
     dmg: w.dmg * dmgScale,
-    aoe: w.aoe,
+    aoe: w.aoe + rs.aoeAdd,
     size: w.size,
     color: w.color,
     trailAcc: 0,
     age: 0,
-    range: w.range ?? (w.kind === 'rocket' ? 42 : 34),
+    range: (w.range ?? (w.kind === 'rocket' ? 42 : 34)) * rs.rangeMult,
   });
 }
 
@@ -727,121 +731,6 @@ function updateSkulls(dt, time) {
   warnRingMesh.instanceMatrix.needsUpdate = true;
 }
 
-// ============================================================ Boss 技能：锤击震地波 + 地刺
-// -- 震地波：从落锤点向外扩散的橙色冲击环，扫到小队即造成伤害
-const SHOCK_MAX = 4;
-const shockPool = [];
-for (let i = 0; i < SHOCK_MAX; i++) {
-  const mesh = new THREE.Mesh(
-    new THREE.RingGeometry(0.9, 1.0, 48).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide })
-  );
-  mesh.visible = false;
-  scene.add(mesh);
-  shockPool.push(mesh);
-}
-let shockwaves = [];
-
-function spawnShockwave(x, z) {
-  const mesh = shockPool.find((m) => !m.visible);
-  if (!mesh) return;
-  mesh.visible = true;
-  mesh.position.set(x, 0.05, z);
-  shockwaves.push({ x, z, r: 1.2, maxR: 15, mesh, hit: false });
-  spawnBurst(x, 0.4, z, 0xb0a088, 26, 6, 0.6);
-  sfx.hammer();
-  state.shake = Math.min(0.6, state.shake + 0.35);
-}
-
-function updateShockwaves(dt) {
-  for (let i = shockwaves.length - 1; i >= 0; i--) {
-    const w = shockwaves[i];
-    w.r += 11 * dt;
-    w.mesh.scale.set(w.r, 1, w.r);
-    w.mesh.material.opacity = 0.85 * (1 - w.r / w.maxR);
-    // 冲击环扫过小队
-    if (!w.hit && Math.abs(Math.hypot(squad.x - w.x, squad.z - w.z) - w.r) < 1.4) {
-      w.hit = true;
-      loseSoldiers(Math.max(3, Math.round(state.count * 0.12)));
-    }
-    if (w.r >= w.maxR) {
-      w.mesh.visible = false;
-      shockwaves.splice(i, 1);
-    }
-  }
-}
-
-// -- 地刺：红圈预警后从地下窜出的尖刺丛
-const SPIKE_MAX = 9;
-function makeSpikeGeo() {
-  const parts = [];
-  for (let i = 0; i < 7; i++) {
-    const a = Math.random() * Math.PI * 2;
-    const r = Math.random() * 1.3;
-    parts.push(new THREE.ConeGeometry(0.16 + Math.random() * 0.1, 1.6 + Math.random() * 0.9, 5)
-      .translate(Math.cos(a) * r, 0.8, Math.sin(a) * r));
-  }
-  return mergeGeometries(parts);
-}
-const spikePool = [];
-for (let i = 0; i < SPIKE_MAX; i++) {
-  const spike = new THREE.Mesh(
-    makeSpikeGeo(),
-    new THREE.MeshStandardMaterial({ color: 0x5a4a42, roughness: 0.6 })
-  );
-  spike.castShadow = true;
-  spike.visible = false;
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(1.2, 1.5, 32).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0xff3030, transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide })
-  );
-  ring.visible = false;
-  scene.add(spike, ring);
-  spikePool.push({ spike, ring, busy: false });
-}
-let spikePatches = [];
-
-function spawnSpikePatch(x, z) {
-  const pool = spikePool.find((p) => !p.busy);
-  if (!pool) return;
-  pool.busy = true;
-  pool.ring.visible = true;
-  pool.ring.position.set(x, 0.04, z);
-  pool.spike.position.set(x, -2.6, z);
-  spikePatches.push({ x, z, pool, phase: 'warn', t: 0.85, hit: false });
-}
-
-function updateSpikePatches(dt, time) {
-  for (let i = spikePatches.length - 1; i >= 0; i--) {
-    const sp = spikePatches[i];
-    sp.t -= dt;
-    if (sp.phase === 'warn') {
-      const pulse = 1 + Math.sin(time * 14) * 0.12;
-      sp.pool.ring.scale.set(pulse, 1, pulse);
-      if (sp.t <= 0) {
-        sp.phase = 'up';
-        sp.t = 0.55;
-        sp.pool.ring.visible = false;
-        sp.pool.spike.visible = true;
-        spawnBurst(sp.x, 0.3, sp.z, 0x6a5a50, 12, 4, 0.4);
-        sfx.spikes();
-        if (Math.hypot(squad.x - sp.x, squad.z - sp.z) < 2.0 + squadRadius() * 0.3) {
-          loseSoldiers(Math.max(2, Math.round(state.count * 0.07)));
-        }
-      }
-    } else if (sp.phase === 'up') {
-      // 破土而出 → 停留 → 缩回
-      const y = sp.t > 0.4 ? THREE.MathUtils.lerp(0, -2.6, (sp.t - 0.4) / 0.15) : (sp.t > 0.15 ? 0 : THREE.MathUtils.lerp(-2.6, 0, sp.t / 0.15));
-      sp.pool.spike.position.y = y;
-      if (sp.t <= 0) {
-        sp.pool.spike.visible = false;
-        sp.pool.busy = false;
-        spikePatches.splice(i, 1);
-      }
-    }
-  }
-}
-
 // ============================================================ 粒子爆点 + 地面血泊
 const bursts = [];
 function spawnBurst(x, y, z, color, n = 14, speed = 5, life = 0.45) {
@@ -934,7 +823,17 @@ function gore(x, z) {
 }
 
 // ============================================================ 士兵 & 僵尸群渲染（每种僵尸一个实例化渲染器）
-const soldierCrowd = new CrowdRenderer(scene, soldierParts(), MAX_SOLDIER_RENDER);
+let soldierGold = false;
+let soldierCrowd = new CrowdRenderer(scene, soldierParts(false), MAX_SOLDIER_RENDER);
+// 自适应画质：帧率不足时自动下调士兵渲染上限，恢复后回升
+let currentRenderCap = MAX_SOLDIER_RENDER;
+
+function swapSoldierCrowd(gold) {
+  if (soldierGold === gold) return;
+  soldierGold = gold;
+  for (const mesh of soldierCrowd.meshes) scene.remove(mesh);
+  soldierCrowd = new CrowdRenderer(scene, soldierParts(gold), MAX_SOLDIER_RENDER);
+}
 const zombieCrowds = {};
 const zombieBuckets = {};
 for (const key of ZOMBIE_TYPE_KEYS) {
@@ -951,10 +850,12 @@ for (let i = 0; i < MAX_SOLDIER_RENDER; i++) {
 }
 function formationScale(n) {
   if (n <= 1) return BASE_SPACING;
-  return Math.min(BASE_SPACING, MAX_SQUAD_RADIUS / Math.sqrt(n - 1));
+  // 编队半径随人数增长（受路面宽度约束），大部队铺满道路，视觉上人多势众
+  const radius = Math.min(4.2, MAX_SQUAD_RADIUS + 0.28 * Math.sqrt(n));
+  return Math.min(BASE_SPACING, radius / Math.sqrt(n - 1));
 }
 function squadRadius() {
-  const n = Math.min(state.count, MAX_SOLDIER_RENDER);
+  const n = Math.min(state.count, currentRenderCap);
   return n <= 1 ? 0.4 : formationScale(n) * Math.sqrt(n - 1) + 0.4;
 }
 
@@ -965,70 +866,25 @@ const shieldMesh = new THREE.Mesh(
 shieldMesh.visible = false;
 scene.add(shieldMesh);
 
-// ============================================================ Boss（周期性刷新，可同时多个）
-function createBossMesh() {
-  const g = new THREE.Group();
-  const mat = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.4, 1.6), mat(0x4e7a2f));
-  body.position.y = 2.2;
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.85, 12, 12), mat(0x76aa4a));
-  head.position.y = 4.1;
-  const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.35, 0.5), mat(0x3c5c22));
-  jaw.position.set(0, 3.8, -0.7);
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xff3030 });
-  const e1 = new THREE.Mesh(new THREE.SphereGeometry(0.14, 8, 8), eyeMat);
-  e1.position.set(-0.3, 4.25, -0.75);
-  const e2 = e1.clone(); e2.position.x = 0.3;
-  const armL = new THREE.Mesh(new THREE.BoxGeometry(0.7, 2.4, 0.7), mat(0x5c8a3c));
-  armL.position.set(-1.85, 2.4, -0.3);
-  armL.rotation.x = 0.5;
-  const armR = armL.clone(); armR.position.x = 1.85;
-  const legs = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.2, 1.2), mat(0x3a4a28));
-  legs.position.y = 0.6;
-  g.add(body, head, jaw, e1, e2, armL, armR, legs);
-  g.traverse((o) => { o.castShadow = true; });
-  g.userData.armL = armL;
-  g.userData.armR = armR;
-  return g;
-}
-
-let bosses = [];
-
-function spawnBoss() {
-  const diff = diffAt(state.dist);
-  const mesh = createBossMesh();
-  const s = 1 + Math.min(diff * 0.08, 1.6);
-  mesh.scale.set(s, s, s);
-  // 血量同时随距离和当前兵力成长，防止大部队秒杀
-  const hp = 350 + diff * 280 + state.count * 8;
-  const boss = {
-    mesh, hp, maxHp: hp,
-    x: (Math.random() - 0.5) * 4,
-    z: squad.z - 85,
-    slamTimer: 2,
-    throwTimer: 1.5,
-    hammerTimer: 5,
-    spikeTimer: 3.5,
-  };
-  mesh.position.set(boss.x, 0, boss.z);
-  scene.add(mesh);
-  bosses.push(boss);
-  ui.bossbar.classList.add('visible');
-  showBanner('⚠️ BOSS 来袭！');
-  sfx.bossRoar();
-  state.shake = 0.4;
-}
-
 // ============================================================ 游戏状态
 const sfx = new SFX();
 const state = {
-  phase: 'menu',            // menu | run | result
+  phase: 'menu',            // menu | run | upgrade | result
   dist: 0,
   best: parseInt(localStorage.getItem('dg_best') || '0', 10),
   count: 10,
   maxCount: 10,
   kills: 0,
   weapon: 'rifle',
+  weaponLevels: { rifle: 0, shotgun: 0, minigun: 0, rocket: 0, tesla: 0, flamer: 0 },
+  // 击杀升级
+  killXp: 0,
+  killLevel: 0,
+  xpMult: 1,
+  // 局内成长叠加（三选一强化卡）
+  runStats: { dmgMult: 1, rateMult: 1, pelletsAdd: 0, aoeAdd: 0, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 },
+  reinfMult: 1,           // 增援/奖励兵力倍率（meta × 局内叠加）
+  meta: null,             // 开局时的 meta 快照
   fireAcc: 0,
   fireIndex: 0,
   rageTime: 0,
@@ -1041,8 +897,8 @@ const state = {
   nextGateZ: -40,
   nextPickupZ: -70,
   nextWaveZ: -30,
-  nextBossAt: FIRST_BOSS_AT,
-  lastBossAt: 0,
+  nextHordeAt: HORDE_FIRST_AT,
+  lastHordeAt: 0,
   trickleTimer: 2,
   pullX: 0,
   pullTime: 0,
@@ -1107,9 +963,9 @@ function updateSpawners(dt) {
     state.nextPickupZ -= PICKUP_SPACING + Math.random() * 60;
   }
 
-  // 波次密度和规模随距离增长，直到铺满屏幕的量级
+  // 波次规模随距离和兵力一起增长（人越多尸潮越大，主打堆兵力碾压）
   while (state.nextWaveZ > squad.z - 110) {
-    spawnWave(state.nextWaveZ, Math.round(3 + diff * 3 + Math.random() * 4));
+    spawnWave(state.nextWaveZ, Math.round(6 + 2.5 * diff * Math.sqrt(state.count / 10) + Math.random() * 4));
     state.nextWaveZ -= Math.max(7, WAVE_SPACING - diff * 1.6);
   }
 
@@ -1120,11 +976,18 @@ function updateSpawners(dt) {
     spawnWave(squad.z - 55, 1 + Math.floor(diff * 1.2));
   }
 
-  // 周期性 Boss
-  if (state.dist >= state.nextBossAt) {
-    state.lastBossAt = state.nextBossAt;
-    state.nextBossAt += BOSS_INTERVAL;
-    spawnBoss();
+  // 周期性尸潮爆发（替代原 Boss）：一大波 + 增援奖励
+  if (state.dist >= state.nextHordeAt) {
+    state.lastHordeAt = state.nextHordeAt;
+    state.nextHordeAt += HORDE_INTERVAL;
+    spawnWave(squad.z - 90, Math.round(14 + diff * 8));
+    const bonus = Math.round((8 + diff * 3) * state.reinfMult);
+    state.count += bonus;
+    state.maxCount = Math.max(state.maxCount, state.count);
+    floatText(new THREE.Vector3(squad.x, 2.5, squad.z), `+${bonus} 增援!`, true);
+    showBanner('🧟 尸潮来袭！');
+    sfx.hammer();
+    state.shake = Math.min(0.6, state.shake + 0.3);
   }
 }
 
@@ -1154,8 +1017,6 @@ const ui = {
   levelTag: document.getElementById('levelTag'),
   progressFill: document.getElementById('progressFill'),
   countBadge: document.getElementById('countBadge'),
-  bossbar: document.getElementById('bossbar'),
-  bossFill: document.querySelector('#bossbar .fill'),
   weaponTag: document.getElementById('weaponTag'),
   buffRow: document.getElementById('buffRow'),
   banner: document.getElementById('banner'),
@@ -1168,6 +1029,13 @@ const ui = {
   resetBtn: document.getElementById('resetBtn'),
   startBtn: document.getElementById('startBtn'),
   muteBtn: document.getElementById('muteBtn'),
+  meta: document.getElementById('metaOverlay'),
+  metaCoins: document.getElementById('metaCoins'),
+  metaList: document.getElementById('metaList'),
+  metaBtn: document.getElementById('metaBtn'),
+  metaCloseBtn: document.getElementById('metaCloseBtn'),
+  upgrade: document.getElementById('upgradeOverlay'),
+  upgradeCards: document.getElementById('upgradeCards'),
 };
 ui.resetBtn.style.display = 'none'; // 无尽模式没有"回到第 1 关"
 
@@ -1189,31 +1057,29 @@ function floatText(worldPos, text, good) {
   setTimeout(() => el.remove(), 1100);
 }
 
+function formatCount(n) {
+  if (n >= 10000) return `${(n / 10000).toFixed(1)}万`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
+}
+
 const _proj = new THREE.Vector3();
 function updateHud() {
   _proj.set(squad.x, 2.6, squad.z).project(camera);
   ui.countBadge.style.left = `${(_proj.x * 0.5 + 0.5) * window.innerWidth}px`;
   ui.countBadge.style.top = `${(-_proj.y * 0.5 + 0.5) * window.innerHeight}px`;
-  ui.countBadge.textContent = state.count;
+  ui.countBadge.textContent = formatCount(state.count);
 
   ui.levelTag.textContent = `${Math.floor(state.dist)}m`;
-  // 进度条 = 距下一个 Boss
-  const span = state.nextBossAt - state.lastBossAt;
-  ui.progressFill.style.width = `${Math.min(100, ((state.dist - state.lastBossAt) / span) * 100).toFixed(1)}%`;
+  // 进度条 = 距下一次尸潮爆发
+  const span = state.nextHordeAt - state.lastHordeAt;
+  ui.progressFill.style.width = `${Math.min(100, ((state.dist - state.lastHordeAt) / span) * 100).toFixed(1)}%`;
 
   let html = '';
   if (state.rageTime > 0) html += `<div class="buffChip">🔥 狂暴 ${state.rageTime.toFixed(0)}s</div>`;
   if (state.shieldTime > 0) html += `<div class="buffChip">🛡️ 护盾 ${state.shieldTime.toFixed(0)}s</div>`;
   if (state.freezeTime > 0) html += `<div class="buffChip">❄️ 冰冻 ${state.freezeTime.toFixed(0)}s</div>`;
   ui.buffRow.innerHTML = html;
-
-  if (bosses.length > 0) {
-    const b = bosses[0];
-    ui.bossbar.classList.add('visible');
-    ui.bossFill.style.width = `${Math.max(0, (b.hp / b.maxHp) * 100).toFixed(1)}%`;
-  } else {
-    ui.bossbar.classList.remove('visible');
-  }
 }
 
 // ============================================================ 输入
@@ -1230,6 +1096,145 @@ window.addEventListener('pointerup', () => { dragging = false; });
 window.addEventListener('keydown', (e) => { keys[e.code] = true; });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
+// ============================================================ 击杀升级（三选一强化卡）
+function xpNeed(level) {
+  return Math.round(KILL_XP_BASE * Math.pow(level, KILL_XP_POW));
+}
+
+function addKill() {
+  state.kills++;
+  state.killXp += state.xpMult;
+  tryLevelUp();
+}
+
+function tryLevelUp() {
+  if (state.phase !== 'run') return;
+  const need = xpNeed(state.killLevel + 1);
+  if (state.killXp < need) return;
+  state.killXp -= need;
+  state.killLevel++;
+  openUpgradeChoice();
+}
+
+function openUpgradeChoice() {
+  state.phase = 'upgrade';
+  const opts = [...RUN_UPGRADES].sort(() => Math.random() - 0.5).slice(0, 3);
+  ui.upgradeCards.innerHTML = '';
+  for (const u of opts) {
+    const card = document.createElement('div');
+    card.className = 'upgCard';
+    card.innerHTML = `<div class="uc-icon">${u.icon}</div><div class="uc-label">${u.label}</div>`;
+    card.addEventListener('click', () => {
+      applyRunUpgrade(u.id);
+      ui.upgrade.classList.remove('visible');
+      state.phase = 'run';
+      sfx.levelUp();
+      showBanner(`🆙 ${u.icon} ${u.label}`);
+      tryLevelUp(); // 若又攒够一次升级则继续弹出
+    });
+    ui.upgradeCards.appendChild(card);
+  }
+  ui.upgrade.classList.add('visible');
+}
+
+function applyRunUpgrade(id) {
+  const rs = state.runStats;
+  const m = state.meta;
+  switch (id) {
+    case 'dmg': rs.dmgMult += 0.15; break;
+    case 'rate': rs.rateMult += 0.12; break;
+    case 'pellet': rs.pelletsAdd += 1; break;
+    case 'aoe': rs.aoeAdd += 0.4; break;
+    case 'range': rs.rangeMult += 0.2; break;
+    case 'speed':
+      rs.speedAdd += 0.5;
+      squad.speed = 8.5 + m.speed + rs.speedAdd;
+      break;
+    case 'reinf':
+      rs.reinfMult += 0.2;
+      state.reinfMult = (1 + m.reinf) * (1 + rs.reinfMult);
+      break;
+    case 'shield': state.shieldTime = Math.max(state.shieldTime, 3); break;
+    case 'xp':
+      rs.xpMult += 0.2;
+      state.xpMult = (1 + m.xpGain) * (1 + rs.xpMult);
+      break;
+  }
+}
+
+// ============================================================ 局外成长面板
+function openMetaPanel() {
+  renderMetaList();
+  ui.menu.classList.remove('visible');
+  ui.meta.classList.add('visible');
+}
+
+function closeMetaPanel() {
+  ui.meta.classList.remove('visible');
+  ui.menu.classList.add('visible');
+}
+
+function renderMetaList() {
+  ui.metaCoins.textContent = `💰 ${getCoins()}`;
+  ui.metaList.innerHTML = '';
+  const levels = metaLevels();
+  const paid = paidUnlocked();
+  for (const upg of META_UPGRADES) {
+    const item = document.createElement('div');
+    item.className = `metaItem${upg.paid ? ' paid' : ''}`;
+    const lv = upg.paid ? (paid.includes(upg.id) ? 1 : 0) : (levels[upg.id] || 0);
+    const maxed = lv >= upg.max;
+    const unlocked = upg.paid && lv >= 1;
+    const cost = upg.paid ? `💎 ¥${upg.price}` : `🪙 ${levelCost(upg, lv)}`;
+
+    const info = document.createElement('div');
+    info.className = 'mi-info';
+    info.innerHTML =
+      `<div class="mi-name">${upg.icon} ${upg.name}</div>` +
+      `<div class="mi-desc">${upg.desc}</div>` +
+      (upg.paid ? '' : `<div class="mi-level">Lv ${lv} / ${upg.max}</div>`);
+
+    const btn = document.createElement('button');
+    btn.className = `mi-btn${upg.paid ? ' paid-btn' : ''}`;
+    if (upg.paid) {
+      btn.textContent = unlocked ? '已解锁 ✓' : `解锁 ${cost}`;
+      btn.disabled = unlocked;
+      btn.addEventListener('click', () => {
+        btn.disabled = true;
+        btn.textContent = '💳 支付中…';
+        sfx.pickup('medkit');
+        // 破解钩子：模拟支付流程后直接放行
+        mockPurchase(upg).then(() => {
+          sfx.levelUp();
+          renderMetaList();
+        });
+      });
+    } else {
+      btn.textContent = maxed ? '已满级' : (lv > 0 ? `升级 ${cost}` : `购买 ${cost}`);
+      btn.disabled = maxed;
+      btn.addEventListener('click', () => {
+        if (getCoins() < levelCost(upg, lv)) {
+          btn.textContent = '金币不足';
+          setTimeout(renderMetaList, 700);
+          return;
+        }
+        addCoins(-levelCost(upg, lv));
+        const next = metaLevels();
+        next[upg.id] = (next[upg.id] || 0) + 1;
+        setMetaLevels(next);
+        sfx.levelUp();
+        renderMetaList();
+      });
+    }
+    item.appendChild(info);
+    item.appendChild(btn);
+    ui.metaList.appendChild(item);
+  }
+}
+
+ui.metaBtn.addEventListener('click', openMetaPanel);
+ui.metaCloseBtn.addEventListener('click', closeMetaPanel);
+
 // ============================================================ 游戏流程
 function startRun() {
   // 清理旧战场
@@ -1239,30 +1244,29 @@ function startRun() {
   pickups = [];
   zombies = [];
   bullets.length = 0;
-  for (const b of bosses) scene.remove(b.mesh);
-  bosses = [];
   skulls = [];
   skullMesh.count = 0;
   warnRingMesh.count = 0;
   enemyBullets = [];
   enemyBulletMesh.count = 0;
-  for (const w of shockwaves) w.mesh.visible = false;
-  shockwaves = [];
-  for (const sp of spikePatches) {
-    sp.pool.spike.visible = false;
-    sp.pool.ring.visible = false;
-    sp.pool.busy = false;
-  }
-  spikePatches = [];
   for (const pool of bloodPools) pool.mesh.visible = false;
   resetChunks();
 
+  // ---- 应用局外成长（叠加在初始状态上）
+  const m = state.meta = getMetaSnapshot();
   squad.x = 0; squad.targetX = 0; squad.z = 0;
+  squad.speed = 8.5 + m.speed;
   state.dist = 0;
-  state.count = 10;
-  state.maxCount = 10;
+  state.count = 10 + m.startSoldiers;
+  state.maxCount = state.count;
   state.kills = 0;
   state.weapon = 'rifle';
+  state.weaponLevels = { rifle: 0, shotgun: 0, minigun: 0, rocket: 0, tesla: 0, flamer: 0 };
+  state.runStats = { dmgMult: 1, rateMult: 1, pelletsAdd: 0, aoeAdd: 0, rangeMult: 1, speedAdd: 0, reinfMult: 0, xpMult: 0 };
+  state.killXp = 0;
+  state.killLevel = 0;
+  state.xpMult = 1 + m.xpGain;
+  state.reinfMult = 1 + m.reinf;
   state.fireAcc = 0;
   state.rageTime = 0;
   state.shieldTime = 0;
@@ -1273,12 +1277,27 @@ function startRun() {
   state.nextGateZ = -40;
   state.nextPickupZ = -70;
   state.nextWaveZ = -30;
-  state.nextBossAt = FIRST_BOSS_AT;
-  state.lastBossAt = 0;
+  state.nextHordeAt = HORDE_FIRST_AT;
+  state.lastHordeAt = 0;
   state.trickleTimer = 2;
   state.pullTime = 0;
-  ui.weaponTag.textContent = WEAPONS.rifle.name;
-  ui.bossbar.classList.remove('visible');
+  ui.weaponTag.textContent = `${WEAPONS[state.weapon].name} Lv${state.weaponLevels[state.weapon]}`;
+  swapSoldierCrowd(!!m.goldArmy);
+
+  // 开局 buff 类 meta
+  if (m.shieldStart > 0) state.shieldTime = m.shieldStart;
+  if (m.rageStart > 0) state.rageTime = m.rageStart;
+  if (m.freezeStart > 0) state.freezeTime = m.freezeStart;
+  if (m.luckyStart > 0) applyPickup(rngPick(Object.keys(ITEMS)));
+  if (m.startNuke) {
+    // 付费「开局核弹」：起跑后一小波僵尸 + 核弹清屏
+    setTimeout(() => {
+      if (state.phase === 'run') {
+        spawnWave(squad.z - 80, 26);
+        applyPickup('nuke');
+      }
+    }, 600);
+  }
 
   state.phase = 'run';
   ui.menu.classList.remove('visible');
@@ -1298,11 +1317,15 @@ function onDefeat() {
     state.best = dist;
     localStorage.setItem('dg_best', String(dist));
   }
+  // 金币结算：击杀 ×2 + 距离/10，双倍金币付费特权 ×2
+  const coins = Math.floor((state.kills * 2 + dist / 10) * (state.meta?.doubleCoins ? 2 : 1));
+  const balance = addCoins(coins);
   ui.resultTitle.textContent = '💀 全 军 覆 没';
   ui.resultTitle.className = 'lose';
   ui.resultStats.innerHTML =
     `冲锋 ${dist}m ${isRecord ? '🏆 新纪录！' : `（最佳 ${state.best}m）`}<br/>` +
-    `击杀 ${state.kills} &nbsp;|&nbsp; 巅峰兵力 ${state.maxCount} 人`;
+    `击杀 ${state.kills} &nbsp;|&nbsp; 巅峰兵力 ${formatCount(state.maxCount)} 人<br/>` +
+    `💰 金币 +${coins}（余额 ${balance}）`;
   ui.resultBtn.textContent = '再次出击 ↻';
   sfx.stopBgm();
   sfx.lose();
@@ -1332,8 +1355,8 @@ function applyPickup(type) {
   sfx.pickup(type);
   floatText(new THREE.Vector3(squad.x, 2.5, squad.z), `${info.icon} ${info.name}`, true);
   if (type === 'medkit') {
-    const add = Math.max(5, Math.round(state.count * 0.15));
-    state.count = Math.min(9999, state.count + add);
+    const add = Math.max(5, Math.round(state.count * 0.15 * state.reinfMult));
+    state.count += add;
     state.maxCount = Math.max(state.maxCount, state.count);
   } else if (type === 'rage') {
     state.rageTime = 8;
@@ -1358,10 +1381,9 @@ function applyPickup(type) {
     state.shake = 0.6;
     for (let i = zombies.length - 1; i >= 0; i--) {
       gore(zombies[i].x, zombies[i].z);
-      state.kills++;
+      addKill();
       zombies.splice(i, 1);
     }
-    for (const b of bosses) b.hp -= b.maxHp * 0.2;
   }
 }
 
@@ -1390,15 +1412,24 @@ function hitInteractiveGate(gate) {
   }
 }
 
-// 武器门被打到 0 → 立即激活装备，无需穿门
+// 武器门被打到 0 → 立即装备并升 1 级；二选一，激活后整对门关闭
 function activateWeaponGate(gate) {
-  state.weapon = gate.value;
-  ui.weaponTag.textContent = WEAPONS[gate.value].name;
+  const key = gate.value;
+  state.weapon = key;
+  state.weaponLevels[key] = (state.weaponLevels[key] || 0) + 1;
+  const lvl = state.weaponLevels[key];
+  ui.weaponTag.textContent = `${WEAPONS[key].name} Lv${lvl}`;
   drawGateCanvas(gate);
-  floatText(new THREE.Vector3(gate.x, GATE_H, gate.z), `${WEAPONS[gate.value].name} 已装备!`, true);
+  floatText(new THREE.Vector3(gate.x, GATE_H, gate.z), `${WEAPONS[key].name} Lv${lvl} 已装备!`, true);
   spawnBurst(gate.x, 1.8, gate.z, 0xffd24a, 26, 6, 0.5);
   spawnBurst(gate.x, 2.4, gate.z, 0x7dff9b, 18, 5, 0.5);
   sfx.weaponUp();
+  const pair = gate.pair;
+  if (pair && !pair.consumed) {
+    pair.consumed = true;
+    pair.a.group.visible = false;
+    pair.b.group.visible = false;
+  }
 }
 
 // ============================================================ 每帧逻辑
@@ -1425,15 +1456,8 @@ function updateRun(dt, time) {
       if (zb.z > state.laserZ - 0.5) {
         gore(zb.x, zb.z);
         spawnBurst(zb.x, 1.0, zb.z, 0xff4a6a, 8, 4, 0.35);
-        state.kills++;
+        addKill();
         zombies.splice(i, 1);
-      }
-    }
-    for (const boss of bosses) {
-      if (boss.z > state.laserZ - 0.5 && boss._laserMark !== state.laserZ0) {
-        boss._laserMark = state.laserZ0;
-        boss.hp -= boss.maxHp * 0.3;
-        spawnBurst(boss.x, 2.5, boss.z, 0xff4a6a, 24, 6, 0.5);
       }
     }
     if (state.laserZ < squad.z - 75) {
@@ -1445,15 +1469,17 @@ function updateRun(dt, time) {
   updateSpawners(dt);
   cleanupBehind();
 
-  // ---- 全员齐射
+  // ---- 全员齐射（伤害/射速/弹丸/范围叠加武器等级与局内成长）
   const weapon = WEAPONS[state.weapon];
-  const renderN = Math.max(1, Math.min(state.count, MAX_SOLDIER_RENDER));
+  const renderN = Math.max(1, Math.min(state.count, currentRenderCap));
   const scale = formationScale(renderN);
   const shooters = Math.min(state.count, MAX_SHOOTERS);
   const rageMult = state.rageTime > 0 ? 2 : 1;
   const weaponPower = 1 + state.dist / 600; // 武器随距离越来越强
-  const dmgScale = (state.count / shooters) * weaponPower;
-  state.fireAcc += shooters * weapon.rate * rageMult * dt;
+  const rs = state.runStats;
+  const wlvl = state.weaponLevels[state.weapon] || 0;
+  const dmgScale = (state.count / shooters) * weaponPower * (1 + wlvl * 0.12) * rs.dmgMult * (1 + state.meta.startDmg);
+  state.fireAcc += shooters * weapon.rate * rs.rateMult * (1 + state.meta.startRate) * rageMult * dt;
   let shots = Math.min(Math.floor(state.fireAcc), 40);
   state.fireAcc -= shots;
   while (shots-- > 0) {
@@ -1463,7 +1489,7 @@ function updateRun(dt, time) {
     if (weapon.kind === 'zap') {
       fireZap(sx, sz - 0.5, weapon.dmg * dmgScale);
     } else {
-      for (let p = 0; p < weapon.pellets; p++) {
+      for (let p = 0; p < weapon.pellets + rs.pelletsAdd; p++) {
         spawnBullet(sx + 0.16, 0.72, sz - 0.5, weapon, dmgScale);
       }
     }
@@ -1637,7 +1663,7 @@ function updateRun(dt, time) {
     if (zb.hp <= 0) {
       gore(zb.x, zb.z);
       sfx.zombieDie(Math.hypot(zb.x - squad.x, zb.z - squad.z));
-      state.kills++;
+      addKill();
       zombies.splice(i, 1);
       continue;
     }
@@ -1663,96 +1689,8 @@ function updateRun(dt, time) {
     if (zombies[i].hp <= 0) {
       gore(zombies[i].x, zombies[i].z);
       sfx.zombieDie(Math.hypot(zombies[i].x - squad.x, zombies[i].z - squad.z));
-      state.kills++;
+      addKill();
       zombies.splice(i, 1);
-    }
-  }
-
-  // ---- Boss（边跑边打）
-  for (let i = bosses.length - 1; i >= 0; i--) {
-    const boss = bosses[i];
-    const bossR = 2.2 * boss.mesh.scale.x;
-
-    for (const b of bullets) {
-      if (b.dead) continue;
-      if (Math.abs(b.z - boss.z) < bossR && Math.abs(b.x - boss.x) < bossR) {
-        b.dead = true;
-        boss.hp -= b.dmg;
-        if (b.kind === 'rocket') {
-          spawnBurst(b.x, 2, boss.z + bossR * 0.5, 0xff8a3a, 16, 5, 0.4);
-          sfx.explosion();
-        } else if (Math.random() < 0.3) {
-          spawnBurst(b.x, 1.5 + Math.random() * 2, boss.z + bossR * 0.5, 0xffd24a, 5, 3, 0.25);
-        }
-      }
-    }
-
-    // 冰冻期间 Boss 完全停摆（仍然挨打）
-    if (!frozen) {
-      // 锚定在小队前方 ~7.5 处：远了就追，近了就随小队一起后撤，永远不会跑到身后
-      const targetZ = squad.z - 7.5;
-      const maxStep = (squad.speed + 3.5) * dt;
-      boss.z += THREE.MathUtils.clamp(targetZ - boss.z, -maxStep, maxStep);
-      if (boss.z > squad.z - 4) boss.z = squad.z - 4; // 兜底：绝不越过小队
-      const gap = boss.z - squad.z; // 负值 = boss 在前方
-      boss.x += (squad.x * 0.7 - boss.x) * Math.min(1, dt * 1.6);
-
-      boss.slamTimer -= dt;
-      if (boss.slamTimer <= 0 && gap > -10) {
-        boss.slamTimer = 1.5;
-        const loss = Math.max(2, Math.round(state.count * 0.08));
-        spawnBurst(squad.x, 0.8, squad.z - 1, 0xff5050, 22, 6, 0.5);
-        loseSoldiers(loss);
-        if (state.phase === 'result') return;
-      }
-      // 距离太远够不着时投掷兽颅
-      boss.throwTimer -= dt;
-      if (boss.throwTimer <= 0 && gap < -9) {
-        boss.throwTimer = 2.6;
-        throwSkull(boss.x, 3.6 * boss.mesh.scale.x, boss.z, 0.06);
-        boss.mesh.userData.armR.rotation.x = -1.6; // 抡臂动作
-      }
-      // 锤击地面：双臂高举砸下，掀起扩散的震地波
-      boss.hammerTimer -= dt;
-      if (boss.hammerTimer <= 0 && gap > -16) {
-        boss.hammerTimer = 6 + Math.random() * 2;
-        boss.mesh.userData.armL.rotation.x = -2.4;
-        boss.mesh.userData.armR.rotation.x = -2.4;
-        spawnShockwave(boss.x, boss.z);
-      }
-      // 地刺：在小队预判路径上连布三丛尖刺
-      boss.spikeTimer -= dt;
-      if (boss.spikeTimer <= 0) {
-        boss.spikeTimer = 7 + Math.random() * 2;
-        for (let k = 0; k < 3; k++) {
-          spawnSpikePatch(
-            THREE.MathUtils.clamp(squad.x + (Math.random() - 0.5) * 4, -SQUAD_X_LIMIT, SQUAD_X_LIMIT),
-            squad.z - 6 - k * 7
-          );
-        }
-      }
-      const t = Math.max(0, boss.slamTimer);
-      boss.mesh.userData.armL.rotation.x = 0.5 + Math.sin(t * 8) * 0.9;
-      boss.mesh.userData.armR.rotation.x = 0.5 + Math.cos(t * 8) * 0.9;
-
-      boss.mesh.position.set(boss.x, Math.abs(Math.sin(time * 3)) * 0.1, boss.z);
-      boss.mesh.rotation.y = Math.atan2(squad.x - boss.x, squad.z - boss.z);
-    }
-
-    if (boss.hp <= 0) {
-      spawnBurst(boss.x, 2.5, boss.z, 0xc01020, 40, 9, 0.9);
-      spawnBurst(boss.x, 3.5, boss.z, 0xffd24a, 40, 9, 1.0);
-      spawnBloodPool(boss.x, boss.z);
-      scene.remove(boss.mesh);
-      bosses.splice(i, 1);
-      state.kills++;
-      // 击杀奖励：补充兵力
-      const bonus = Math.round(8 + diff * 3);
-      state.count = Math.min(9999, state.count + bonus);
-      state.maxCount = Math.max(state.maxCount, state.count);
-      floatText(new THREE.Vector3(boss.x, 3, boss.z), `+${bonus} 增援!`, true);
-      showBanner('💥 BOSS 击破！');
-      sfx.levelUp();
     }
   }
 }
@@ -1760,11 +1698,22 @@ function updateRun(dt, time) {
 // ============================================================ 渲染循环
 const soldierAgents = [];
 const clock = new THREE.Clock();
+const frameTimes = [];
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.05);
   const time = clock.elapsedTime;
+
+  // 自适应画质：持续掉帧则降低士兵渲染上限，恢复后回升
+  frameTimes.push(dt);
+  if (frameTimes.length > 60) frameTimes.shift();
+  if (frameTimes.length === 60) {
+    const avg = frameTimes.reduce((a, b) => a + b, 0) / 60;
+    if (avg > 1 / 45) currentRenderCap = Math.max(800, currentRenderCap - 600);
+    else if (avg < 1 / 58) currentRenderCap = Math.min(MAX_SOLDIER_RENDER, currentRenderCap + 600);
+    frameTimes.length = 0;
+  }
 
   updateChunks();
 
@@ -1773,8 +1722,6 @@ function animate() {
     updateBullets(dt);
     updateEnemyBullets(dt);
     updateSkulls(dt, time);
-    updateShockwaves(dt);
-    updateSpikePatches(dt, time);
     updateZapLines(dt);
     updateHud();
   }
@@ -1782,7 +1729,7 @@ function animate() {
   updateBloodPools(dt);
 
   soldierAgents.length = 0;
-  const renderN = Math.min(state.count, MAX_SOLDIER_RENDER);
+  const renderN = Math.min(state.count, currentRenderCap);
   const scale = formationScale(renderN);
   for (let i = 0; i < renderN; i++) {
     soldierAgents.push({
@@ -1826,5 +1773,5 @@ function animate() {
 
 animate();
 
-// 调试接口（控制台可用：__dbg.spawnBoss() 等）
-window.__dbg = { state, squad, spawnBoss, throwSkull, spawnWave, applyPickup, get bosses() { return bosses; } };
+// 调试接口（控制台可用：__dbg.spawnWave() 等）
+window.__dbg = { state, squad, throwSkull, spawnWave, applyPickup, openUpgradeChoice, getCoins, addCoins };
